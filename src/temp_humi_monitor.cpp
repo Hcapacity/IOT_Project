@@ -1,7 +1,8 @@
 #include "temp_humi_monitor.h"
+#include <WiFi.h>
 
 static DHT20 g_dht20;
-static LiquidCrystal_I2C g_lcd(0x21, 16, 2); 
+static LiquidCrystal_I2C g_lcd(0x21, 16, 2);
 // Nếu không hiện, test lại bằng I2C scanner.
 // Rất có thể phải đổi thành 0x27 hoặc 0x3F.
 
@@ -13,6 +14,60 @@ static void lcd_print_padded(uint8_t col, uint8_t row, const char *text) {
   snprintf(buffer, sizeof(buffer), "%-16.16s", text);
   g_lcd.setCursor(col, row);
   g_lcd.print(buffer);
+}
+
+static int wifi_quality_percent(int32_t rssi) {
+  if (rssi <= -100) return 0;
+  if (rssi >= -50)  return 100;
+  return 2 * (rssi + 100);
+}
+
+static const char* wifi_quality_text(int32_t rssi) {
+  if (rssi >= -55) return "EXCELLENT";
+  if (rssi >= -67) return "GOOD";
+  if (rssi >= -75) return "FAIR";
+  if (rssi >= -85) return "WEAK";
+  return "BAD";
+}
+
+static const char* wifi_mode_text() {
+  wl_status_t st = WiFi.status();
+  wifi_mode_t mode = WiFi.getMode();
+
+  if (mode == WIFI_MODE_AP) return "AP MODE";
+  if (st == WL_CONNECTED) return "CONNECTED";
+  return "DISCONNECTED";
+}
+
+static void render_lcd(sensor_data_t data) {
+  char line1[17];
+  char line2[17];
+
+  if (g_lcdViewMode == LCD_VIEW_WIFI) {
+    wl_status_t st = WiFi.status();
+    int32_t rssi = (st == WL_CONNECTED) ? WiFi.RSSI() : -100;
+    int quality = (st == WL_CONNECTED) ? wifi_quality_percent(rssi) : 0;
+
+    snprintf(line1, sizeof(line1), "WiFi:%-10s", wifi_mode_text());
+
+    if (st == WL_CONNECTED) {
+      snprintf(line2, sizeof(line2), "Q:%3d%% %4ddBm", quality, (int)rssi);
+    } else {
+      snprintf(line2, sizeof(line2), "Q:  0%% NO LINK");
+    }
+  } else {
+    if (isnan(data.temperature) || isnan(data.humidity)) {
+      snprintf(line1, sizeof(line1), "Sensor Error");
+      snprintf(line2, sizeof(line2), "Check DHT20");
+    } else {
+      const char *status = classify_environment_status(data.temperature, data.humidity);
+      snprintf(line1, sizeof(line1), "T:%4.1fC H:%4.1f", data.temperature, data.humidity);
+      snprintf(line2, sizeof(line2), "Status:%s", status);
+    }
+  }
+
+  lcd_print_padded(0, 0, line1);
+  lcd_print_padded(0, 1, line2);
 }
 
 void sensor_task(void *pvParameters) {
@@ -63,7 +118,6 @@ void sensor_task(void *pvParameters) {
       Serial.printf("[Sensor] T=%.2f C, H=%.2f %%\n", data.temperature, data.humidity);
     } else {
       Serial.println("[Sensor] Failed to read DHT20.");
-      // vẫn gửi xuống LCD để LCD hiện lỗi rõ ràng
       xQueueOverwrite(ctx->lcdQueue, &data);
       xQueueOverwrite(ctx->webQueue, &data);
     }
@@ -94,34 +148,35 @@ void lcd_task(void *pvParameters) {
     xSemaphoreGive(ctx->i2cMutex);
   }
 
-  sensor_data_t data{};
+  sensor_data_t lastData{};
+  lastData.temperature = NAN;
+  lastData.humidity = NAN;
+  lastData.timestamp = 0;
+
+  lcd_view_mode_t lastMode = g_lcdViewMode;
+  int lastRssi = -999;
 
   while (true) {
-    if (xQueueReceive(ctx->lcdQueue, &data, portMAX_DELAY) == pdTRUE) {
+    sensor_data_t incoming{};
+    bool hasNewData = false;
+
+    if (xQueueReceive(ctx->lcdQueue, &incoming, pdMS_TO_TICKS(500)) == pdTRUE) {
+      lastData = incoming;
+      hasNewData = true;
+    }
+
+    int currentRssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
+    bool wifiChanged = abs(currentRssi - lastRssi) >= 3;
+    bool modeChanged = (lastMode != g_lcdViewMode);
+
+    if (hasNewData || wifiChanged || modeChanged) {
       if (xSemaphoreTake(ctx->i2cMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
-        char line1[17];
-        char line2[17];
-
-        if (isnan(data.temperature) || isnan(data.humidity)) {
-          snprintf(line1, sizeof(line1), "Sensor Error");
-          snprintf(line2, sizeof(line2), "Check DHT20");
-        } else {
-          const char *status = classify_environment_status(data.temperature, data.humidity);
-
-          // Dòng 1: Temp + Hum
-          // ví dụ: "T:28.1C H:65.2"
-          snprintf(line1, sizeof(line1), "T:%4.1fC H:%4.1f", data.temperature, data.humidity);
-
-          // Dòng 2: Status
-          // ví dụ: "Status:NORMAL"
-          snprintf(line2, sizeof(line2), "Status:%s", status);
-        }
-
-        lcd_print_padded(0, 0, line1);
-        lcd_print_padded(0, 1, line2);
-
+        render_lcd(lastData);
         xSemaphoreGive(ctx->i2cMutex);
       }
+
+      lastMode = g_lcdViewMode;
+      lastRssi = currentRssi;
     }
   }
 }

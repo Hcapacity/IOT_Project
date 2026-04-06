@@ -15,14 +15,6 @@
 extern float glob_temperature;
 extern float glob_humidity;
 
-
-// extern String ssid;
-// extern String password;
-// extern String wifi_ssid;
-// extern String wifi_password;
-// extern boolean isWifiConnected;
-
-
 extern boolean isWifiConnected;
 extern SemaphoreHandle_t xBinarySemaphoreInternet;
 
@@ -68,6 +60,14 @@ typedef struct {
   float humidity;
   bool enabled;
 } neo_command_t;
+
+// ===== LCD view mode =====
+typedef enum {
+  LCD_VIEW_SENSOR = 0,
+  LCD_VIEW_WIFI   = 1
+} lcd_view_mode_t;
+
+extern volatile lcd_view_mode_t g_lcdViewMode;
 
 // ===== Application context =====
 typedef struct {

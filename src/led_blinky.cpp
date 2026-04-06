@@ -29,11 +29,11 @@ static void play_mqtt_success_pattern() {
 static TickType_t led_half_period_ticks(led_mode_t mode) {
   switch (mode) {
     case LED_MODE_TEMP_COLD:
-      return pdMS_TO_TICKS(500);   // 1 Hz
+      return pdMS_TO_TICKS(5000);   
     case LED_MODE_TEMP_NORMAL:
-      return pdMS_TO_TICKS(250);   // 2 Hz
+      return pdMS_TO_TICKS(2000);   
     case LED_MODE_TEMP_HOT:
-      return pdMS_TO_TICKS(100);   // 5 Hz
+      return pdMS_TO_TICKS(500);   
     case LED_MODE_BOOT:
       return pdMS_TO_TICKS(300);
     case LED_MODE_ERROR:
