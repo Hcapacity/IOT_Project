@@ -75,6 +75,7 @@ typedef struct {
   QueueHandle_t neoQueue;
   QueueHandle_t lcdQueue;
   QueueHandle_t webQueue;
+  QueueHandle_t coreQueue;
   SemaphoreHandle_t i2cMutex;
   SemaphoreHandle_t internetSemaphore;
 } app_context_t;

@@ -2,7 +2,7 @@
 
 // ----------- CONFIGURE THESE! -----------
 const char* coreIOT_Server = "app.coreiot.io";  
-const char* coreIOT_Token = "g7drm1amhd3dchr379xu";   // Device Access Token
+const char* coreIOT_Token = "h61qp4bfrpbsp7iy5x2c";   // Device Access Token
 const int   mqttPort = 1883;
 // ----------------------------------------
 
@@ -74,6 +74,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 
+static bool setup_coreiot(app_context_t *ctx) {
+  if (ctx == nullptr || ctx->internetSemaphore == nullptr) {
+    Serial.println("[CoreIoT] Invalid app context");
+    return false;
+  }
+
+  Serial.println("[CoreIoT] Waiting internet...");
+  xSemaphoreTake(ctx->internetSemaphore, portMAX_DELAY);
+  Serial.println("[CoreIoT] Internet ready");
+
+  client.setServer(coreIOT_Server, mqttPort);
+  client.setCallback(callback);
+  return true;
+}
+
+
 void setup_coreiot(){
 
   //Serial.print("Connecting to WiFi...");
@@ -101,23 +117,49 @@ void setup_coreiot(){
 
 }
 
-void coreiot_task(void *pvParameters){
+void coreiot_task(void *pvParameters) {
+  app_context_t *ctx = static_cast<app_context_t *>(pvParameters);
+  if (ctx == nullptr || ctx->webQueue == nullptr) {
+    Serial.println("[CoreIoT] Invalid context or webQueue");
+    vTaskDelete(nullptr);
+    return;
+  }
 
-    setup_coreiot();
+  if (!setup_coreiot(ctx)) {
+    vTaskDelete(nullptr);
+    return;
+  }
 
-    while(1){
+  sensor_data_t data{};
+  data.temperature = NAN;
+  data.humidity = NAN;
 
-        if (!client.connected()) {
-            reconnect();
-        }
-        client.loop();
-
-        // Sample payload, publish to 'v1/devices/me/telemetry'
-        String payload = "{\"temperature\":" + String(glob_temperature) +  ",\"humidity\":" + String(glob_humidity) + "}";
-        
-        client.publish("v1/devices/me/telemetry", payload.c_str());
-
-        Serial.println("Published payload: " + payload);
-        vTaskDelay(10000);  // Publish every 10 seconds
+  while (1) {
+    if (!client.connected()) {
+      reconnect();
     }
+    client.loop();
+
+    // Đọc mẫu mới nhất từ queue (không pop)
+    if (xQueuePeek(ctx->webQueue, &data, pdMS_TO_TICKS(200)) == pdTRUE) {
+      if (!isnan(data.temperature) && !isnan(data.humidity)) {
+        StaticJsonDocument<128> doc;
+        doc["temperature"] = data.temperature;
+        doc["humidity"] = data.humidity;
+        doc["ts"] = (uint32_t)(data.timestamp * portTICK_PERIOD_MS);
+
+        char payload[128];
+        size_t n = serializeJson(doc, payload, sizeof(payload));
+
+        bool ok = client.publish("v1/devices/me/telemetry", payload, n);
+        Serial.print("[CoreIoT] ");
+        Serial.println(ok ? "Publish OK" : "Publish FAIL");
+        Serial.println(payload);
+      } else {
+        Serial.println("[CoreIoT] Sensor invalid, skip publish");
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10000));
+  }
 }

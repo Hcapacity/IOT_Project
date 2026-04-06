@@ -6,6 +6,7 @@
 #include "neo_blinky.h"
 #include "temp_humi_monitor.h"
 #include "mainserver.h"
+#include "coreiot.h"
 
 void setup() {
   Serial.begin(115200);
@@ -22,11 +23,12 @@ void setup() {
   app->neoQueue = xQueueCreate(1, sizeof(neo_command_t));
   app->lcdQueue = xQueueCreate(1, sizeof(sensor_data_t));
   app->webQueue = xQueueCreate(1, sizeof(sensor_data_t));
+  app->coreQueue = xQueueCreate(1, sizeof(sensor_data_t));
   app->i2cMutex = xSemaphoreCreateMutex();
   app->internetSemaphore = xSemaphoreCreateBinary();
 
   if (app->ledQueue == nullptr || app->neoQueue == nullptr || app->lcdQueue == nullptr ||
-      app->webQueue == nullptr || app->i2cMutex == nullptr || app->internetSemaphore == nullptr) {
+      app->webQueue == nullptr || app->coreQueue == nullptr || app->i2cMutex == nullptr || app->internetSemaphore == nullptr) {
     Serial.println("[Main] Failed to create queues/semaphores.");
     return;
   }
@@ -36,6 +38,7 @@ void setup() {
   xTaskCreate(neo_pixel_task,    "NeoPixelTask",    3072, app, 2, nullptr);
   xTaskCreate(lcd_task,          "LcdTask",         4096, app, 2, nullptr);
   xTaskCreate(main_server_task,  "WebServerTask",   8192, app, 2, nullptr);
+  xTaskCreate(coreiot_task,      "CoreIoTTask",     6144, app, 2, nullptr);
 
   Serial.println("[Main] RTOS tasks created successfully.");
 }
