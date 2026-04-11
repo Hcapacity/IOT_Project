@@ -114,12 +114,16 @@ void sensor_task(void *pvParameters) {
 
       xQueueOverwrite(ctx->lcdQueue, &data);
       xQueueOverwrite(ctx->webQueue, &data);
+      xQueueOverwrite(ctx->tinyMLQueue, &data);
+      xQueueOverwrite(ctx->coreQueue, &data);
 
       Serial.printf("[Sensor] T=%.2f C, H=%.2f %%\n", data.temperature, data.humidity);
     } else {
       Serial.println("[Sensor] Failed to read DHT20.");
       xQueueOverwrite(ctx->lcdQueue, &data);
       xQueueOverwrite(ctx->webQueue, &data);
+      xQueueOverwrite(ctx->tinyMLQueue, &data);
+      xQueueOverwrite(ctx->coreQueue, &data);
     }
 
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(2000));

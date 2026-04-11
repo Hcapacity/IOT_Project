@@ -1,13 +1,30 @@
 #include "coreiot.h"
+#include "app_time_utils.h"
 
 // ----------- CONFIGURE THESE! -----------
 const char* coreIOT_Server = "app.coreiot.io";  
 const char* coreIOT_Token = "h61qp4bfrpbsp7iy5x2c";   // Device Access Token
 const int   mqttPort = 1883;
+constexpr int32_t kGmtOffsetSec = 7 * 3600;
+constexpr int32_t kDaylightOffsetSec = 0;
 // ----------------------------------------
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+
+static float clamp01(float v) {
+  if (v < 0.0f) return 0.0f;
+  if (v > 1.0f) return 1.0f;
+  return v;
+}
+
+static const char* rain_status_short(float p01) {
+  if (p01 < 0.2f) return "Dry";
+  if (p01 < 0.4f) return "Low";
+  if (p01 < 0.6f) return "Maybe";
+  if (p01 < 0.8f) return "Rain";
+  return "Storm";
+}
 
 
 void reconnect() {
@@ -24,7 +41,7 @@ void reconnect() {
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
-      delay(5000);
+      vTaskDelay(pdMS_TO_TICKS(5000));
     }
   }
 }
@@ -52,20 +69,30 @@ void callback(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  const char* method = doc["method"];
-  if (strcmp(method, "setStateLED") == 0) {
-    // Check params type (could be boolean, int, or string according to your RPC)
-    // Example: {"method": "setValueLED", "params": "ON"}
-    const char* params = doc["params"];
+  const char* method = doc["method"] | "";
+  JsonVariant params = doc["params"];
 
-    if (strcmp(params, "ON") == 0) {
+  // Accept a few common RPC method names used across the project/UI.
+  if (strcmp(method, "setValue") == 0 ||
+      strcmp(method, "setValueLED") == 0 ||
+      strcmp(method, "setStateLED") == 0) {
+    bool turnOn = false;
+
+    if (params.is<const char*>()) {
+      const char* paramsText = params.as<const char*>();
+      turnOn = (strcmp(paramsText, "ON") == 0) || (strcmp(paramsText, "1") == 0) || (strcmp(paramsText, "true") == 0);
+    } else if (params.is<bool>()) {
+      turnOn = params.as<bool>();
+    } else if (params.is<int>() || params.is<long>()) {
+      turnOn = params.as<int>() != 0;
+    }
+
+    if (turnOn) {
       Serial.println("Device turned ON.");
-      //TODO
-
-    } else {   
+      // TODO: bật LED / relay / action tương ứng
+    } else {
       Serial.println("Device turned OFF.");
-      //TODO
-
+      // TODO: tắt LED / relay / action tương ứng
     }
   } else {
     Serial.print("Unknown method: ");
@@ -89,38 +116,10 @@ static bool setup_coreiot(app_context_t *ctx) {
   return true;
 }
 
-
-void setup_coreiot(){
-
-  //Serial.print("Connecting to WiFi...");
-  //WiFi.begin(wifi_ssid, wifi_password);
-  //while (WiFi.status() != WL_CONNECTED) {
-  
-  // while (isWifiConnected == false) {
-  //   delay(500);
-  //   Serial.print(".");
-  // }
-
-  while(1){
-    if (xSemaphoreTake(xBinarySemaphoreInternet, portMAX_DELAY)) {
-      break;
-    }
-    delay(500);
-    Serial.print(".");
-  }
-
-
-  Serial.println(" Connected!");
-
-  client.setServer(coreIOT_Server, mqttPort);
-  client.setCallback(callback);
-
-}
-
 void coreiot_task(void *pvParameters) {
   app_context_t *ctx = static_cast<app_context_t *>(pvParameters);
-  if (ctx == nullptr || ctx->webQueue == nullptr) {
-    Serial.println("[CoreIoT] Invalid context or webQueue");
+  if (ctx == nullptr || ctx->coreQueue == nullptr || ctx->tinyResultQueue == nullptr) {
+    Serial.println("[CoreIoT] Invalid context or queues");
     vTaskDelete(nullptr);
     return;
   }
@@ -131,8 +130,11 @@ void coreiot_task(void *pvParameters) {
   }
 
   sensor_data_t data{};
+  tinyml_result_t mlResult{};
+  bool hasMlResult = false;
   data.temperature = NAN;
   data.humidity = NAN;
+  TickType_t lastPublishTick = xTaskGetTickCount();
 
   while (1) {
     if (!client.connected()) {
@@ -140,26 +142,48 @@ void coreiot_task(void *pvParameters) {
     }
     client.loop();
 
-    // Đọc mẫu mới nhất từ queue (không pop)
-    if (xQueuePeek(ctx->webQueue, &data, pdMS_TO_TICKS(200)) == pdTRUE) {
-      if (!isnan(data.temperature) && !isnan(data.humidity)) {
-        StaticJsonDocument<128> doc;
+    TickType_t now = xTaskGetTickCount();
+    if (xQueuePeek(ctx->coreQueue, &data, 0) == pdTRUE) {
+      if (xQueuePeek(ctx->tinyResultQueue, &mlResult, 0) == pdTRUE) {
+        hasMlResult = true;
+      }
+
+      if ((now - lastPublishTick) >= pdMS_TO_TICKS(10000)) {
+        lastPublishTick = now;
+        if (!isnan(data.temperature) && !isnan(data.humidity)) {
+        AppDateTime dt{};
+        const bool hasEpoch = appTimeNow(kGmtOffsetSec, kDaylightOffsetSec, dt);
+
+        StaticJsonDocument<192> doc;
         doc["temperature"] = data.temperature;
         doc["humidity"] = data.humidity;
-        doc["ts"] = (uint32_t)(data.timestamp * portTICK_PERIOD_MS);
+        doc["ts"] = hasEpoch ? dt.epochSec : static_cast<uint32_t>(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
-        char payload[128];
+        float p01 = 0.0f;
+        const char* pred = "NO_DATA";
+        if (hasMlResult) {
+          p01 = clamp01(mlResult.rainProbability);
+          pred = mlResult.isRain ? "RAIN" : "SUNNY";
+        }
+
+        doc["rain_prob"] = p01;
+        doc["rain_prob_pct"] = p01 * 100.0f;
+        doc["rain_pred"] = pred;
+        doc["rain_status_short"] = rain_status_short(p01);
+
+        char payload[192];
         size_t n = serializeJson(doc, payload, sizeof(payload));
 
         bool ok = client.publish("v1/devices/me/telemetry", payload, n);
         Serial.print("[CoreIoT] ");
         Serial.println(ok ? "Publish OK" : "Publish FAIL");
         Serial.println(payload);
-      } else {
-        Serial.println("[CoreIoT] Sensor invalid, skip publish");
+        } else {
+          Serial.println("[CoreIoT] Sensor invalid, skip publish");
+        }
       }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(10000));
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }

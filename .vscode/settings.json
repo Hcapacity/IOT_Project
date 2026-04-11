@@ -14,6 +14,8 @@
         "format": "cpp",
         "initializer_list": "cpp",
         "span": "cpp",
-        "regex": "cpp"
-    }
+        "regex": "cpp",
+        "cmath": "cpp"
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

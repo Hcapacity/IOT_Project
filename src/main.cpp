@@ -7,6 +7,7 @@
 #include "temp_humi_monitor.h"
 #include "mainserver.h"
 #include "coreiot.h"
+#include "tinyml.h" 
 
 void setup() {
   Serial.begin(115200);
@@ -24,22 +25,25 @@ void setup() {
   app->lcdQueue = xQueueCreate(1, sizeof(sensor_data_t));
   app->webQueue = xQueueCreate(1, sizeof(sensor_data_t));
   app->coreQueue = xQueueCreate(1, sizeof(sensor_data_t));
+  app->tinyMLQueue = xQueueCreate(1, sizeof(sensor_data_t));
+  app->tinyResultQueue = xQueueCreate(1, sizeof(tinyml_result_t));
   app->i2cMutex = xSemaphoreCreateMutex();
   app->internetSemaphore = xSemaphoreCreateBinary();
 
   if (app->ledQueue == nullptr || app->neoQueue == nullptr || app->lcdQueue == nullptr ||
-      app->webQueue == nullptr || app->coreQueue == nullptr || app->i2cMutex == nullptr || app->internetSemaphore == nullptr) {
+      app->webQueue == nullptr || app->coreQueue == nullptr || app->tinyMLQueue == nullptr ||
+      app->tinyResultQueue == nullptr || app->i2cMutex == nullptr || app->internetSemaphore == nullptr) {
     Serial.println("[Main] Failed to create queues/semaphores.");
     return;
   }
 
   xTaskCreate(sensor_task,       "SensorTask",      4096, app, 3, nullptr);
-  xTaskCreate(led_manager_task,  "LedManagerTask",  3072, app, 2, nullptr);
-  xTaskCreate(neo_pixel_task,    "NeoPixelTask",    3072, app, 2, nullptr);
+  xTaskCreate(led_manager_task,  "LedManagerTask",  3072, app, 1, nullptr);
+  xTaskCreate(neo_pixel_task,    "NeoPixelTask",    3072, app, 1, nullptr);
   xTaskCreate(lcd_task,          "LcdTask",         4096, app, 2, nullptr);
-  xTaskCreate(main_server_task,  "WebServerTask",   8192, app, 2, nullptr);
-  xTaskCreate(coreiot_task,      "CoreIoTTask",     6144, app, 2, nullptr);
-
+  xTaskCreate(main_server_task,  "WebServerTask",   8192, app, 4, nullptr);
+  xTaskCreate(coreiot_task,      "CoreIoTTask",     6144, app, 1, nullptr);
+  xTaskCreate(tiny_ml_task,      "TinyMLTask",      8192, app, 1, nullptr);
   Serial.println("[Main] RTOS tasks created successfully.");
 }
 

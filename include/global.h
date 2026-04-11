@@ -25,6 +25,13 @@ typedef struct {
   TickType_t timestamp;
 } sensor_data_t;
 
+typedef struct {
+  float rainProbability;
+  bool isRain;
+  TickType_t sensorTimestamp;
+  TickType_t inferTimestamp;
+} tinyml_result_t;
+
 // ===== LED manager =====
 typedef enum {
   LED_MODE_BOOT = 0,
@@ -76,6 +83,8 @@ typedef struct {
   QueueHandle_t lcdQueue;
   QueueHandle_t webQueue;
   QueueHandle_t coreQueue;
+  QueueHandle_t tinyMLQueue;
+  QueueHandle_t tinyResultQueue;
   SemaphoreHandle_t i2cMutex;
   SemaphoreHandle_t internetSemaphore;
 } app_context_t;
