@@ -61,7 +61,7 @@ void setupTinyML()
 }
 
 // ---- Tuning macros ----
-#define TINYML_BATCH_SAMPLES   10   // N mau moi batch
+#define TINYML_BATCH_SAMPLES   20   // N mau moi batch
 #define TINYML_FALLBACK_HOUR   14
 #define TINYML_FALLBACK_MONTH  4
 

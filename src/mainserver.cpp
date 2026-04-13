@@ -1,6 +1,22 @@
 #include "mainserver.h"
 #include <math.h>
 
+#ifndef MQTT_CFG_NAMESPACE
+#define MQTT_CFG_NAMESPACE "coreiot_cfg"
+#endif
+
+#ifndef MQTT_BUF_NAMESPACE
+#define MQTT_BUF_NAMESPACE "coreiot_buf"
+#endif
+
+#ifndef MQTT_AUTH_ACCESS_TOKEN_ONLY
+#define MQTT_AUTH_ACCESS_TOKEN_ONLY 0
+#endif
+
+#ifndef MQTT_AUTH_USER_AND_TOKEN
+#define MQTT_AUTH_USER_AND_TOKEN 1
+#endif
+
 namespace {
   WebServer g_server(80);
   Preferences g_prefs;
@@ -27,6 +43,15 @@ namespace {
   struct SavedWifi {
     String ssid;
     String pass;
+  };
+
+  struct MqttWebConfig {
+    String host;
+    uint16_t port;
+    uint8_t authMode;
+    String clientId;
+    String userToken;
+    String accessToken;
   };
 
   String jsonEscape(const String &s) {
@@ -211,6 +236,70 @@ namespace {
     return json;
   }
 
+  MqttWebConfig loadMqttConfig() {
+    MqttWebConfig cfg;
+    g_prefs.begin(MQTT_CFG_NAMESPACE, true);
+    cfg.host = g_prefs.getString("host", "app.coreiot.io");
+    cfg.port = g_prefs.getUShort("port", 1883);
+    cfg.authMode = g_prefs.getUChar("auth", MQTT_AUTH_ACCESS_TOKEN_ONLY);
+    cfg.clientId = g_prefs.getString("cid", "ESP32Client");
+    cfg.userToken = g_prefs.getString("user", "");
+    cfg.accessToken = g_prefs.getString("atok", "");
+    g_prefs.end();
+
+    if (cfg.host.isEmpty()) cfg.host = "app.coreiot.io";
+    if (cfg.port == 0) cfg.port = 1883;
+    if (cfg.clientId.isEmpty()) cfg.clientId = "ESP32Client";
+    if (cfg.authMode != MQTT_AUTH_ACCESS_TOKEN_ONLY && cfg.authMode != MQTT_AUTH_USER_AND_TOKEN) {
+      cfg.authMode = MQTT_AUTH_ACCESS_TOKEN_ONLY;
+    }
+    return cfg;
+  }
+
+  bool saveMqttConfig(const MqttWebConfig &cfg, String &err) {
+    if (cfg.host.isEmpty()) {
+      err = "MQTT host must not be empty.";
+      return false;
+    }
+    if (cfg.port == 0) {
+      err = "MQTT port must be > 0.";
+      return false;
+    }
+    if (cfg.clientId.isEmpty()) {
+      err = "Client ID must not be empty.";
+      return false;
+    }
+    if (cfg.accessToken.isEmpty()) {
+      err = "Access token must not be empty.";
+      return false;
+    }
+    if (cfg.authMode == MQTT_AUTH_USER_AND_TOKEN && cfg.userToken.isEmpty()) {
+      err = "User token must not be empty for USER+TOKEN mode.";
+      return false;
+    }
+
+    g_prefs.begin(MQTT_CFG_NAMESPACE, false);
+    g_prefs.putString("host", cfg.host);
+    g_prefs.putUShort("port", cfg.port);
+    g_prefs.putUChar("auth", cfg.authMode);
+    g_prefs.putString("cid", cfg.clientId);
+    g_prefs.putString("user", cfg.userToken);
+    g_prefs.putString("atok", cfg.accessToken);
+    g_prefs.end();
+
+    err = "";
+    return true;
+  }
+
+  int getMqttOfflinePendingCount() {
+    g_prefs.begin(MQTT_BUF_NAMESPACE, true);
+    int count = g_prefs.getInt("count", 0);
+    g_prefs.end();
+    if (count < 0) count = 0;
+    if (count > 40) count = 40;
+    return count;
+  }
+
   void pushHistory(float t, float h) {
     g_tempHistory[g_historyHead] = t;
     g_humHistory[g_historyHead] = h;
@@ -318,6 +407,7 @@ namespace {
         <div class="mini"><b>RSSI:</b> <span id="rssiText">-</span></div>
         <div class="mini"><b>Wi-Fi Quality:</b> <span id="qualityText">-</span></div>
         <div class="mini"><b>SSID:</b> <span id="ssidText">-</span></div>
+        <div class="mini"><b>MQTT Pending:</b> <span id="mqttPendingText">0</span></div>
       </div>
     </div>
   </div>
@@ -397,6 +487,7 @@ async function refreshDashboard(){
     document.getElementById('rssiText').innerText = d.rssi + ' dBm';
     document.getElementById('qualityText').innerText = d.quality + '%';
     document.getElementById('ssidText').innerText = d.ssid || '-';
+    document.getElementById('mqttPendingText').innerText = d.mqttPending || 0;
 
     drawChart(d.historyTemp, d.historyHum);
   } catch(e){
@@ -405,7 +496,7 @@ async function refreshDashboard(){
 }
 
 refreshDashboard();
-setInterval(refreshDashboard, 2500);
+setInterval(refreshDashboard, 5000);
 </script>
 </body>
 </html>
@@ -420,12 +511,20 @@ setInterval(refreshDashboard, 2500);
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Wi-Fi Settings</title>
+  <title>Wi-Fi and MQTT Settings</title>
   <style>
     body { margin: 0; font-family: Arial, sans-serif; background: #f4f7fb; color: #1f2937; }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 20px; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 20px; }
     .card { background: white; border-radius: 16px; padding: 18px; box-shadow: 0 4px 16px rgba(0,0,0,0.07); margin-bottom: 16px; }
-    input { width: 100%; padding: 12px; margin: 8px 0 14px 0; box-sizing: border-box; border-radius: 10px; border: 1px solid #cbd5e1; font-size: 15px; }
+    input, select {
+      width: 100%;
+      padding: 12px;
+      margin: 8px 0 14px 0;
+      box-sizing: border-box;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      font-size: 15px;
+    }
     button { border: none; border-radius: 10px; padding: 10px 14px; background: #2563eb; color: white; cursor: pointer; font-weight: 600; margin-right: 10px; margin-top: 6px; }
     button.secondary { background: #475569; }
     .wifiItem { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -437,8 +536,8 @@ setInterval(refreshDashboard, 2500);
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Wi-Fi Settings</h1>
-      <p class="small">Scan nearby networks, review saved credentials, and configure the connection for STA mode.</p>
+      <h1>Wi-Fi and MQTT Settings</h1>
+      <p class="small">Configure network and cloud connection from one page.</p>
       <a href="/"><button class="secondary">Back</button></a>
     </div>
 
@@ -468,9 +567,39 @@ setInterval(refreshDashboard, 2500);
         <label>Password</label>
         <input id="pass" type="password" placeholder="Enter Wi-Fi password" />
 
-        <button type="submit">Connect & Save</button>
+        <button type="submit">Connect and Save</button>
       </form>
-      <p class="small">Selecting a saved profile will automatically fill in both the SSID and password fields.</p>
+      <p class="small">Selecting a saved profile will automatically fill both SSID and password.</p>
+    </div>
+
+    <div class="card">
+      <h2>CoreIoT MQTT Settings</h2>
+      <p class="small">This config is read by CoreIoT task and applied automatically.</p>
+
+      <label>MQTT Host</label>
+      <input id="mqttHost" type="text" placeholder="app.coreiot.io" />
+
+      <label>MQTT Port</label>
+      <input id="mqttPort" type="number" min="1" max="65535" placeholder="1883" />
+
+      <label>Auth Mode</label>
+      <select id="mqttAuth">
+        <option value="0">Access Token Only</option>
+        <option value="1">User Token and Access Token</option>
+      </select>
+
+      <label>Client ID</label>
+      <input id="mqttCid" type="text" placeholder="ESP32Client" />
+
+      <label>User Token (mode 1)</label>
+      <input id="mqttUser" type="text" placeholder="MQTT username or user token" />
+
+      <label>Access Token</label>
+      <input id="mqttAtok" type="password" placeholder="Device access token" />
+
+      <button type="button" onclick="saveMqttConfig()">Save MQTT</button>
+      <p id="mqttMsg" class="small"></p>
+      <p class="small">Offline telemetry pending: <b id="mqttPending">0</b></p>
     </div>
   </div>
 
@@ -548,6 +677,56 @@ setInterval(refreshDashboard, 2500);
       });
   }
 
+  function loadMqttConfig() {
+    fetch('/mqtt-config')
+      .then(r => r.json())
+      .then(c => {
+        document.getElementById('mqttHost').value = c.host || '';
+        document.getElementById('mqttPort').value = c.port || 1883;
+        document.getElementById('mqttAuth').value = String(c.auth || 0);
+        document.getElementById('mqttCid').value = c.cid || 'ESP32Client';
+        document.getElementById('mqttUser').value = c.user || '';
+        document.getElementById('mqttAtok').value = c.atok || '';
+      });
+  }
+
+  function loadMqttBuffer() {
+    fetch('/mqtt-buffer')
+      .then(r => r.json())
+      .then(d => {
+        document.getElementById('mqttPending').innerText = d.pending || 0;
+      });
+  }
+
+  function saveMqttConfig() {
+    const host = document.getElementById('mqttHost').value.trim();
+    const port = document.getElementById('mqttPort').value.trim();
+    const auth = document.getElementById('mqttAuth').value;
+    const cid = document.getElementById('mqttCid').value.trim();
+    const user = document.getElementById('mqttUser').value;
+    const atok = document.getElementById('mqttAtok').value;
+
+    const url = '/mqtt-save?host=' + encodeURIComponent(host) +
+                '&port=' + encodeURIComponent(port) +
+                '&auth=' + encodeURIComponent(auth) +
+                '&cid=' + encodeURIComponent(cid) +
+                '&user=' + encodeURIComponent(user) +
+                '&atok=' + encodeURIComponent(atok);
+
+    fetch(url)
+      .then(r => r.text().then(t => ({ ok: r.ok, text: t })))
+      .then(res => {
+        const msg = document.getElementById('mqttMsg');
+        msg.innerText = res.text;
+        msg.style.color = res.ok ? '#059669' : '#dc2626';
+      })
+      .catch(() => {
+        const msg = document.getElementById('mqttMsg');
+        msg.innerText = 'Failed to save MQTT config.';
+        msg.style.color = '#dc2626';
+      });
+  }
+
   document.getElementById('wifiForm').addEventListener('submit', function(e) {
     e.preventDefault();
     const ssid = document.getElementById('ssid').value;
@@ -556,6 +735,9 @@ setInterval(refreshDashboard, 2500);
   });
 
   loadSaved();
+  loadMqttConfig();
+  loadMqttBuffer();
+  setInterval(loadMqttBuffer, 5000);
 </script>
 </body>
 </html>
@@ -765,6 +947,7 @@ setInterval(refreshDashboard, 2500);
     json += "\"ssid\":\"" + jsonEscape(g_staSsid) + "\",";
     json += "\"rssi\":" + String(rssi) + ",";
     json += "\"quality\":" + String(quality) + ",";
+    json += "\"mqttPending\":" + String(getMqttOfflinePendingCount()) + ",";
 
     json += "\"historyTemp\":[";
     for (int i = 0; i < g_historyCount; ++i) {
@@ -793,6 +976,47 @@ setInterval(refreshDashboard, 2500);
 
   void handleSaved() {
     g_server.send(200, "application/json", savedWifiJson());
+  }
+
+  void handleMqttConfig() {
+    MqttWebConfig cfg = loadMqttConfig();
+
+    String json = "{";
+    json += "\"host\":\"" + jsonEscape(cfg.host) + "\",";
+    json += "\"port\":" + String(cfg.port) + ",";
+    json += "\"auth\":" + String(cfg.authMode) + ",";
+    json += "\"cid\":\"" + jsonEscape(cfg.clientId) + "\",";
+    json += "\"user\":\"" + jsonEscape(cfg.userToken) + "\",";
+    json += "\"atok\":\"" + jsonEscape(cfg.accessToken) + "\"";
+    json += "}";
+
+    g_server.send(200, "application/json", json);
+  }
+
+  void handleMqttSave() {
+    MqttWebConfig cfg = loadMqttConfig();
+
+    if (g_server.hasArg("host")) cfg.host = g_server.arg("host");
+    if (g_server.hasArg("port")) cfg.port = static_cast<uint16_t>(g_server.arg("port").toInt());
+    if (g_server.hasArg("auth")) cfg.authMode = static_cast<uint8_t>(g_server.arg("auth").toInt());
+    if (g_server.hasArg("cid")) cfg.clientId = g_server.arg("cid");
+    if (g_server.hasArg("user")) cfg.userToken = g_server.arg("user");
+    if (g_server.hasArg("atok")) cfg.accessToken = g_server.arg("atok");
+
+    String err;
+    if (!saveMqttConfig(cfg, err)) {
+      g_server.send(400, "text/plain", err);
+      return;
+    }
+
+    g_server.send(200, "text/plain", "MQTT configuration saved.");
+  }
+
+  void handleMqttBuffer() {
+    String json = "{";
+    json += "\"pending\":" + String(getMqttOfflinePendingCount());
+    json += "}";
+    g_server.send(200, "application/json", json);
   }
 
   void handleConnectPage() {
@@ -855,6 +1079,9 @@ setInterval(refreshDashboard, 2500);
     g_server.on("/api/state", HTTP_GET, handleApiState);
     g_server.on("/scan", HTTP_GET, handleScan);
     g_server.on("/saved", HTTP_GET, handleSaved);
+    g_server.on("/mqtt-config", HTTP_GET, handleMqttConfig);
+    g_server.on("/mqtt-save", HTTP_GET, handleMqttSave);
+    g_server.on("/mqtt-buffer", HTTP_GET, handleMqttBuffer);
     g_server.on("/connect-page", HTTP_GET, handleConnectPage);
     g_server.on("/connect-start", HTTP_GET, handleConnectStart);
     g_server.on("/connect-status", HTTP_GET, handleConnectStatus);
@@ -951,6 +1178,6 @@ void main_server_task(void *pvParameters) {
     processStaConnectionState();
     maintainConnection();
 
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(60));
   }
 }

@@ -126,7 +126,7 @@ void sensor_task(void *pvParameters) {
       xQueueOverwrite(ctx->coreQueue, &data);
     }
 
-    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(2000));
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(3000));
   }
 }
 
@@ -164,7 +164,7 @@ void lcd_task(void *pvParameters) {
     sensor_data_t incoming{};
     bool hasNewData = false;
 
-    if (xQueueReceive(ctx->lcdQueue, &incoming, pdMS_TO_TICKS(500)) == pdTRUE) {
+    if (xQueueReceive(ctx->lcdQueue, &incoming, pdMS_TO_TICKS(1000)) == pdTRUE) {
       lastData = incoming;
       hasNewData = true;
     }
