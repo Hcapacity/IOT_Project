@@ -1,16 +1,32 @@
 #include "neo_blinky.h"
+#include <math.h>
 
-// NeoPixel control task
 static uint32_t humidity_to_color(Adafruit_NeoPixel &strip, float humidity) {
-  if (humidity < 30.0f) {
-    return strip.Color(255, 0, 0);   // dry
+  // Giới hạn về 0..100
+  humidity = constrain(humidity, 0.0f, 100.0f);
+
+  // Đổi theo từng 1%
+  int h = (int)roundf(humidity); // 0..100
+
+  uint8_t r = 0;
+  uint8_t g = 0;
+  uint8_t b = 0;
+
+  if (h <= 50) {
+    // 0..50%: đỏ -> xanh lá
+    float t = h / 50.0f;
+    r = (uint8_t)roundf(255.0f * (1.0f - t));
+    g = (uint8_t)roundf(255.0f * t);
+    b = 0;
+  } else {
+    // 51..100%: xanh lá -> xanh dương
+    float t = (h - 50) / 50.0f;
+    r = 0;
+    g = (uint8_t)roundf(255.0f * (1.0f - t));
+    b = (uint8_t)roundf(255.0f * t);
   }
-  else if (humidity < 70.0f) {
-    return strip.Color(0, 255, 0);   // normal
-  }
-  else {
-    return strip.Color(0, 0, 255);   // humid
-  }
+
+  return strip.Color(r, g, b);
 }
 
 void neo_pixel_task(void *pvParameters) {
@@ -32,17 +48,24 @@ void neo_pixel_task(void *pvParameters) {
     if (xQueueReceive(ctx->neoQueue, &cmd, portMAX_DELAY) == pdTRUE) {
       if (cmd.type == NEO_CMD_SET_ENABLE) {
         enabled = cmd.enabled;
-      }
 
-      if (!enabled) {
-        strip.clear();
-        strip.show();
+        if (!enabled) {
+          strip.clear();
+          strip.show();
+        }
         continue;
       }
 
-      float humidity = cmd.humidity;
-      strip.setPixelColor(0, humidity_to_color(strip, humidity));
-      strip.show();
+      if (cmd.type == NEO_CMD_SENSOR_UPDATE) {
+        if (!enabled) {
+          strip.clear();
+          strip.show();
+          continue;
+        }
+
+        strip.setPixelColor(0, humidity_to_color(strip, cmd.humidity));
+        strip.show();
+      }
     }
   }
 }
