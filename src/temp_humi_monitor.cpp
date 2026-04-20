@@ -114,16 +114,12 @@ void sensor_task(void *pvParameters) {
 
       xQueueOverwrite(ctx->lcdQueue, &data);
       xQueueOverwrite(ctx->webQueue, &data);
-      xQueueOverwrite(ctx->tinyMLQueue, &data);
-      xQueueOverwrite(ctx->coreQueue, &data);
 
       Serial.printf("[Sensor] T=%.2f C, H=%.2f %%\n", data.temperature, data.humidity);
     } else {
       Serial.println("[Sensor] Failed to read DHT20.");
       xQueueOverwrite(ctx->lcdQueue, &data);
       xQueueOverwrite(ctx->webQueue, &data);
-      xQueueOverwrite(ctx->tinyMLQueue, &data);
-      xQueueOverwrite(ctx->coreQueue, &data);
     }
 
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(2000));
@@ -157,21 +153,24 @@ void lcd_task(void *pvParameters) {
   lastData.humidity = NAN;
   lastData.timestamp = 0;
 
-  lcd_view_mode_t lastMode = g_lcdViewMode;
+  // Mode mặc định khi boot
+  g_lcdViewMode = LCD_VIEW_SENSOR;
+
+  lcd_view_mode_t lastRenderedMode = g_lcdViewMode;
   int lastRssi = -999;
 
   while (true) {
     sensor_data_t incoming{};
     bool hasNewData = false;
 
-    if (xQueueReceive(ctx->lcdQueue, &incoming, pdMS_TO_TICKS(500)) == pdTRUE) {
+    if (xQueueReceive(ctx->lcdQueue, &incoming, pdMS_TO_TICKS(300)) == pdTRUE) {
       lastData = incoming;
       hasNewData = true;
     }
 
     int currentRssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
     bool wifiChanged = abs(currentRssi - lastRssi) >= 3;
-    bool modeChanged = (lastMode != g_lcdViewMode);
+    bool modeChanged = (lastRenderedMode != g_lcdViewMode);
 
     if (hasNewData || wifiChanged || modeChanged) {
       if (xSemaphoreTake(ctx->i2cMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
@@ -179,7 +178,7 @@ void lcd_task(void *pvParameters) {
         xSemaphoreGive(ctx->i2cMutex);
       }
 
-      lastMode = g_lcdViewMode;
+      lastRenderedMode = g_lcdViewMode;
       lastRssi = currentRssi;
     }
   }
