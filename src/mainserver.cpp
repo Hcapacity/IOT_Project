@@ -269,142 +269,270 @@ namespace {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ESP32 Dashboard</title>
   <style>
-    body{margin:0;font-family:Arial,sans-serif;background:#f4f7fb;color:#1f2937}
-    .wrap{max-width:960px;margin:0 auto;padding:16px}
-    .top,.card{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.07)}
-    .top{padding:18px;margin-bottom:16px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-    .card{padding:18px}
-    .value{font-size:36px;font-weight:800;margin-top:8px}
-    .muted{color:#64748b;font-size:14px;line-height:1.6}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .mini{padding:10px;background:#f8fafc;border-radius:10px}
-    .btn{display:inline-block;margin-top:10px;margin-right:8px;padding:10px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:700}
+    :root{
+      --bg:#eef3f9;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --line:#dbe4ee;
+      --accent:#2563eb;
+      --accent2:#0ea5e9;
+      --ok:#16a34a;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,sans-serif;background:linear-gradient(180deg,#f7fbff 0%,var(--bg) 100%);color:var(--text)}
+    .wrap{max-width:1000px;margin:0 auto;padding:16px}
+    .top,.card{background:var(--card);border-radius:18px;box-shadow:0 6px 18px rgba(15,23,42,.07)}
+    .top{padding:18px 18px 16px 18px;margin-bottom:16px}
+    .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+    .headline{margin:0 0 6px 0;font-size:28px}
+    .muted{color:var(--muted);font-size:14px;line-height:1.6}
+    .actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+    .btn{display:inline-block;padding:10px 14px;background:var(--accent);color:#fff;text-decoration:none;border-radius:10px;font-weight:700}
     .btn.secondary{background:#475569}
-    canvas{width:100%;height:220px;background:#fff;border-radius:10px;border:1px solid #e2e8f0}
-    @media(max-width:760px){.grid,.row{grid-template-columns:1fr}}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .card{padding:18px}
+    .metricTitle{color:var(--muted);font-size:14px}
+    .value{font-size:38px;font-weight:800;margin-top:8px;letter-spacing:-.02em}
+    .unit{font-size:18px;font-weight:700;color:var(--muted)}
+    .statusPill{display:inline-block;padding:8px 12px;border-radius:999px;background:#ecfdf5;color:#166534;font-weight:700;font-size:13px}
+    .mini{padding:12px;background:#f8fbff;border:1px solid #e6edf5;border-radius:12px;min-height:68px}
+    .mini b{display:block;margin-bottom:6px;font-size:13px;color:var(--muted)}
+    .mini span{font-size:17px;font-weight:700;color:var(--text)}
+    .chartWrap{margin-top:16px}
+    .chartCardTitle{margin-bottom:10px;font-size:15px;font-weight:700}
+    .chartSub{margin-top:-2px;margin-bottom:10px;color:var(--muted);font-size:13px}
+    canvas{display:block;width:100%;height:220px;background:#fff;border-radius:12px;border:1px solid var(--line)}
+    .footerNote{margin-top:10px;color:var(--muted);font-size:12px}
+    @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top">
-      <h1 style="margin:0 0 6px 0;font-size:28px">ESP32 Climate Dashboard</h1>
-      <div class="muted">Real-time monitoring of temperature, humidity, and network status.</div>
-      <a class="btn" href="/settings">Wi-Fi Settings</a>
-      <a class="btn secondary" href="/forget">Forget saved Wi-Fi</a>
+      <div class="topbar">
+        <div>
+          <h1 class="headline">ESP32 Climate Dashboard</h1>
+          <div class="muted">Station mode dashboard for temperature and humidity monitoring with lightweight real-time charts.</div>
+          <div class="actions">
+            <a class="btn" href="/settings">Wi-Fi Settings</a>
+            <a class="btn secondary" href="/forget">Forget saved Wi-Fi</a>
+          </div>
+        </div>
+        <div>
+          <div class="statusPill" id="modeText">-</div>
+        </div>
+      </div>
     </div>
 
-    <div class="grid">
+    <div class="grid2">
       <div class="card">
-        <div class="muted">🌡️ Temperature</div>
-        <div class="value"><span id="tempText">--</span> °C</div>
+        <div class="metricTitle">🌡️ Temperature</div>
+        <div class="value"><span id="tempText">--</span> <span class="unit">°C</span></div>
       </div>
       <div class="card">
-        <div class="muted">💧 Humidity</div>
-        <div class="value"><span id="humText">--</span> %</div>
+        <div class="metricTitle">💧 Humidity</div>
+        <div class="value"><span id="humText">--</span> <span class="unit">%</span></div>
       </div>
     </div>
 
     <div class="card" style="margin-top:16px">
-      <div class="muted" style="margin-bottom:10px">Temperature and humidity trends over time</div>
-      <canvas id="chart" width="800" height="220"></canvas>
+      <div class="grid3">
+        <div class="mini"><b>System status</b><span id="weatherText">-</span></div>
+        <div class="mini"><b>Current time</b><span id="timeText">--:--:--</span></div>
+        <div class="mini"><b>STA IP</b><span id="staIpText">-</span></div>
+        <div class="mini"><b>SSID</b><span id="ssidText">-</span></div>
+        <div class="mini"><b>Latest sample</b><span>20 points</span></div>
+        <div class="mini"><b>XAxis unit</b><span>Recent samples</span></div>
+      </div>
     </div>
 
-    <div class="card" style="margin-top:16px">
-      <div class="row">
-        <div class="mini"><b>Status:</b> <span id="weatherText">-</span></div>
-        <div class="mini"><b>Mode:</b> <span id="modeText">-</span></div>
-        <div class="mini"><b>STA IP:</b> <span id="staIpText">-</span></div>
-        <div class="mini"><b>RSSI:</b> <span id="rssiText">-</span></div>
-        <div class="mini"><b>Wi-Fi Quality:</b> <span id="qualityText">-</span></div>
-        <div class="mini"><b>SSID:</b> <span id="ssidText">-</span></div>
+    <div class="grid2 chartWrap">
+      <div class="card">
+        <div class="chartCardTitle">Temperature chart</div>
+        <div class="chartSub">Y-axis: °C &nbsp; | &nbsp; X-axis: 20 most recent samples</div>
+        <canvas id="tempChart" width="460" height="220"></canvas>
+        <div class="footerNote">Shows up to the latest 20 temperature readings.</div>
+      </div>
+      <div class="card">
+        <div class="chartCardTitle">Humidity chart</div>
+        <div class="chartSub">Y-axis: %RH &nbsp; | &nbsp; X-axis: 20 most recent samples</div>
+        <canvas id="humChart" width="460" height="220"></canvas>
+        <div class="footerNote">Shows up to the latest 20 humidity readings.</div>
       </div>
     </div>
   </div>
 
 <script>
-const canvas = document.getElementById('chart');
-const ctx = canvas.getContext('2d');
+const tempCanvas = document.getElementById('tempChart');
+const humCanvas  = document.getElementById('humChart');
 
-function drawChart(tempArr, humArr){
-  const w = canvas.width, h = canvas.height;
-  ctx.clearRect(0,0,w,h);
+function pad2(n){ return String(n).padStart(2,'0'); }
+function updateClock(){
+  const now = new Date();
+  const txt = pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
+  document.getElementById('timeText').innerText = txt;
+}
 
-  const left = 40, top = 12, right = 10, bottom = 24;
+function formatValue(v, digits=1){
+  return (v === null || v === undefined) ? '--' : Number(v).toFixed(digits);
+}
+
+function niceStep(range){
+  if (range <= 5) return 1;
+  if (range <= 10) return 2;
+  if (range <= 20) return 5;
+  if (range <= 50) return 10;
+  return 20;
+}
+
+function drawAxisChart(canvas, values, options){
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const left = 44;
+  const right = 12;
+  const top = 12;
+  const bottom = 30;
   const cw = w - left - right;
   const ch = h - top - bottom;
 
-  ctx.strokeStyle = '#e5e7eb';
-  for(let i=0;i<=4;i++){
-    const y = top + ch*i/4;
-    ctx.beginPath();
-    ctx.moveTo(left,y);
-    ctx.lineTo(w-right,y);
-    ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,w,h);
+
+  const clean = values.filter(v => v !== null && !Number.isNaN(v));
+  let minV = options.defaultMin;
+  let maxV = options.defaultMax;
+
+  if (clean.length) {
+    minV = Math.min(...clean);
+    maxV = Math.max(...clean);
+    if (minV === maxV) {
+      minV -= options.flatPadding;
+      maxV += options.flatPadding;
+    } else {
+      minV -= options.pad;
+      maxV += options.pad;
+    }
   }
 
-  const vals = [];
-  tempArr.forEach(v=>{ if(v!==null) vals.push(v); });
-  humArr.forEach(v=>{ if(v!==null) vals.push(v); });
+  if (options.clampMin !== null) minV = Math.min(minV, options.clampMin);
+  if (options.clampMax !== null) maxV = Math.max(maxV, options.clampMax);
 
-  if(!vals.length) return;
+  const stepY = niceStep(maxV - minV);
+  const axisMin = Math.floor(minV / stepY) * stepY;
+  const axisMax = Math.ceil(maxV / stepY) * stepY;
+  const axisRange = Math.max(1, axisMax - axisMin);
 
-  let minV = Math.min(...vals);
-  let maxV = Math.max(...vals);
-  if(minV === maxV){ minV -= 1; maxV += 1; }
+  ctx.strokeStyle = '#dbe4ee';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#64748b';
+  ctx.font = '11px Arial';
+
+  for (let i = 0; i <= 4; i++) {
+    const y = top + (ch * i / 4);
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(w - right, y);
+    ctx.stroke();
+
+    const labelValue = axisMax - (axisRange * i / 4);
+    ctx.fillText(labelValue.toFixed(options.yDigits), 4, y + 4);
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left, h - bottom);
+  ctx.lineTo(w - right, h - bottom);
+  ctx.strokeStyle = '#94a3b8';
+  ctx.stroke();
+
+  const count = values.length;
+  const stepX = count > 1 ? cw / (count - 1) : cw;
+  const xLabels = [0, 4, 9, 14, 19];
+  ctx.fillStyle = '#64748b';
+  xLabels.forEach(i => {
+    if (i >= count) return;
+    const x = left + i * stepX;
+    ctx.fillText(String(i + 1), x - 4, h - 10);
+  });
 
   function mapY(v){
-    return top + (maxV - v) * ch / (maxV - minV);
+    return top + ((axisMax - v) / axisRange) * ch;
   }
 
-  const count = Math.max(tempArr.length, humArr.length);
-  const stepX = count > 1 ? cw / (count - 1) : cw;
+  ctx.beginPath();
+  let started = false;
+  values.forEach((v, i) => {
+    if (v === null || Number.isNaN(v)) return;
+    const x = left + i * stepX;
+    const y = mapY(v);
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.strokeStyle = options.lineColor;
+  ctx.lineWidth = 2;
+  ctx.stroke();
 
-  function drawSeries(arr, color){
+  ctx.fillStyle = options.lineColor;
+  values.forEach((v, i) => {
+    if (v === null || Number.isNaN(v)) return;
+    const x = left + i * stepX;
+    const y = mapY(v);
     ctx.beginPath();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    let started = false;
-
-    arr.forEach((v, i) => {
-      if(v === null) return;
-      const x = left + i*stepX;
-      const y = mapY(v);
-      if(!started){
-        ctx.moveTo(x,y);
-        started = true;
-      } else {
-        ctx.lineTo(x,y);
-      }
-    });
-    ctx.stroke();
-  }
-
-  drawSeries(tempArr, '#ef4444');
-  drawSeries(humArr, '#0ea5e9');
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
 }
 
 async function refreshDashboard(){
-  try{
+  try {
     const r = await fetch('/api/state');
     const d = await r.json();
 
-    document.getElementById('tempText').innerText = d.temp === null ? '--' : d.temp;
-    document.getElementById('humText').innerText = d.hum === null ? '--' : d.hum;
-    document.getElementById('weatherText').innerText = d.weather;
-    document.getElementById('modeText').innerText = d.mode;
-    document.getElementById('staIpText').innerText = d.staIp;
-    document.getElementById('rssiText').innerText = d.rssi + ' dBm';
-    document.getElementById('qualityText').innerText = d.quality + '%';
+    document.getElementById('tempText').innerText = formatValue(d.temp, 1);
+    document.getElementById('humText').innerText = formatValue(d.hum, 1);
+    document.getElementById('weatherText').innerText = d.weather || '-';
+    document.getElementById('modeText').innerText = d.mode || '-';
+    document.getElementById('staIpText').innerText = d.staIp || '-';
     document.getElementById('ssidText').innerText = d.ssid || '-';
 
-    drawChart(d.historyTemp, d.historyHum);
-  } catch(e){
+    drawAxisChart(tempCanvas, d.historyTemp || [], {
+      lineColor: '#ef4444',
+      defaultMin: 20,
+      defaultMax: 40,
+      pad: 1,
+      flatPadding: 1,
+      clampMin: null,
+      clampMax: null,
+      yDigits: 0
+    });
+
+    drawAxisChart(humCanvas, d.historyHum || [], {
+      lineColor: '#0ea5e9',
+      defaultMin: 0,
+      defaultMax: 100,
+      pad: 3,
+      flatPadding: 2,
+      clampMin: 0,
+      clampMax: 100,
+      yDigits: 0
+    });
+  } catch (e) {
     console.log(e);
   }
 }
 
+updateClock();
 refreshDashboard();
+setInterval(updateClock, 1000);
 setInterval(refreshDashboard, 2500);
 </script>
 </body>
@@ -749,9 +877,6 @@ setInterval(refreshDashboard, 2500);
   }
 
   void handleApiState() {
-    int32_t rssi = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : -100;
-    int quality = (WiFi.status() == WL_CONNECTED) ? wifiQualityPercent(rssi) : 0;
-
     String json = "{";
     json += "\"temp\":";
     json += isnan(g_latestSensor.temperature) ? "null" : String(g_latestSensor.temperature, 1);
@@ -763,8 +888,6 @@ setInterval(refreshDashboard, 2500);
     json += "\"mode\":\"" + wifiStatusText() + "\",";
     json += "\"staIp\":\"" + staIpText() + "\",";
     json += "\"ssid\":\"" + jsonEscape(g_staSsid) + "\",";
-    json += "\"rssi\":" + String(rssi) + ",";
-    json += "\"quality\":" + String(quality) + ",";
 
     json += "\"historyTemp\":[";
     for (int i = 0; i < g_historyCount; ++i) {
