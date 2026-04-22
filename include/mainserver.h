@@ -7,14 +7,17 @@
 #include <Preferences.h>
 #include "global.h"
 
-#define BOOT_PIN 0
+#define AP_SSID "Hoang_ESP32_Config"
+#define AP_PASSWORD "0367994254"
 
-#define AP_SSID              "Hoang_ESP32_Config"
-#define AP_PASSWORD          "0367994254"
-#define STA_CONNECT_TIMEOUT  15000UL
-
+#define STA_CONNECT_TIMEOUT 10000UL
 #define WIFI_STORE_NAMESPACE "wifi_cfg"
-#define WIFI_MAX_SAVED       5
+#define WIFI_MAX_SAVED 5
+
+#define USER_LED_GPIO 5
+#define USER_LED_PWM_CHANNEL 1
+#define USER_LED_PWM_FREQ 5000
+#define USER_LED_PWM_RESOLUTION 8
 
 void main_server_task(void *pvParameters);
 

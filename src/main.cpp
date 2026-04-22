@@ -28,11 +28,14 @@ void setup() {
   app->tinyMLQueue = xQueueCreate(1, sizeof(sensor_data_t));
   app->tinyResultQueue = xQueueCreate(1, sizeof(tinyml_result_t));
   app->i2cMutex = xSemaphoreCreateMutex();
+  app->stateMutex = xSemaphoreCreateMutex();
   app->internetSemaphore = xSemaphoreCreateBinary();
+  init_app_shared_state(app);
 
   if (app->ledQueue == nullptr || app->neoQueue == nullptr || app->lcdQueue == nullptr ||
       app->webQueue == nullptr || app->coreQueue == nullptr || app->tinyMLQueue == nullptr ||
-      app->tinyResultQueue == nullptr || app->i2cMutex == nullptr || app->internetSemaphore == nullptr) {
+      app->tinyResultQueue == nullptr || app->i2cMutex == nullptr || app->stateMutex == nullptr ||
+      app->internetSemaphore == nullptr) {
     Serial.println("[Main] Failed to create queues/semaphores.");
     return;
   }

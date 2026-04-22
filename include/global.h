@@ -12,12 +12,6 @@
 #define I2C_SCL_PIN 12
 #define BOOT_PIN 0
 
-extern float glob_temperature;
-extern float glob_humidity;
-
-extern boolean isWifiConnected;
-extern SemaphoreHandle_t xBinarySemaphoreInternet;
-
 // ===== Sensor payload =====
 typedef struct {
   float temperature;
@@ -25,8 +19,9 @@ typedef struct {
   TickType_t timestamp;
 } sensor_data_t;
 
+// ===== TinyML result =====
 typedef struct {
-  float rainProbability;
+  float rainProbability;      // 0.0 -> 1.0
   bool isRain;
   TickType_t sensorTimestamp;
   TickType_t inferTimestamp;
@@ -71,10 +66,21 @@ typedef struct {
 // ===== LCD view mode =====
 typedef enum {
   LCD_VIEW_SENSOR = 0,
-  LCD_VIEW_WIFI   = 1
+  LCD_VIEW_WIFI = 1
 } lcd_view_mode_t;
 
-extern volatile lcd_view_mode_t g_lcdViewMode;
+// ===== NEW: LCD content mode controlled by CoreIOT =====
+typedef enum {
+  LCD_CONTENT_SENSOR = 0,   // normal: temp/humi + ESP mode
+  LCD_CONTENT_TINYML = 1    // tinyml forecast + ESP mode
+} lcd_content_mode_t;
+
+typedef struct {
+  float latestTemperature;
+  float latestHumidity;
+  bool wifiConnected;
+  lcd_content_mode_t lcdContentMode;
+} app_shared_state_t;
 
 // ===== Application context =====
 typedef struct {
@@ -86,8 +92,17 @@ typedef struct {
   QueueHandle_t tinyMLQueue;
   QueueHandle_t tinyResultQueue;
   SemaphoreHandle_t i2cMutex;
+  SemaphoreHandle_t stateMutex;
   SemaphoreHandle_t internetSemaphore;
+  app_shared_state_t sharedState;
 } app_context_t;
+
+void init_app_shared_state(app_context_t *ctx);
+void app_set_latest_sensor(app_context_t *ctx, float temperature, float humidity);
+void app_set_wifi_connected(app_context_t *ctx, bool connected);
+bool app_get_wifi_connected(app_context_t *ctx);
+void app_set_lcd_content_mode(app_context_t *ctx, lcd_content_mode_t mode);
+lcd_content_mode_t app_get_lcd_content_mode(app_context_t *ctx);
 
 led_mode_t classify_temperature_mode(float temperature);
 const char *classify_environment_status(float temperature, float humidity);

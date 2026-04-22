@@ -1,0 +1,205 @@
+\section{Requirements}
+
+\subsection{Requirement Mapping Strategy}
+The assignment statement provides high-level tasks, but a report must explain
+how those tasks become concrete, testable requirements in the implemented
+system. In this project, each assignment task is refined into two layers:
+\begin{enumerate}
+  \item a functional requirement that can be observed by the user, and
+  \item an implementation-oriented requirement that constrains timing, task
+  communication, or system architecture.
+\end{enumerate}
+This section follows the same logic. It first describes the detailed
+requirements of each task and then summarizes the non-functional properties that
+the complete system must satisfy.
+
+\subsection{Task 1 Requirements: Temperature-Dependent LED Behavior}
+The assignment requires at least three distinct LED behaviors based on
+temperature. In the implemented system, the following concrete requirements were
+derived:
+\begin{itemize}
+  \item The system shall classify temperature into at least three operating
+  regions.
+  \item The discrete LED shall blink with a different cadence for each
+  temperature region.
+  \item LED mode changes shall be triggered automatically whenever a new valid
+  temperature sample is produced.
+  \item The LED logic shall run independently of the sensor task so that the
+  sensing period remains stable.
+  \item The LED task shall also support short event pulses for system feedback
+  such as Wi-Fi-connected or error-notification events.
+\end{itemize}
+
+The current implementation satisfies these requirements by mapping temperature
+to three primary modes: cold, normal, and hot. These modes correspond to
+significantly different blink half-periods, which makes the environmental state
+easy to distinguish even without reading the LCD or web dashboard.
+
+\subsection{Task 2 Requirements: Humidity-Dependent NeoPixel Indication}
+For the NeoPixel task, the assignment requires humidity-based color indication
+using semaphore-style synchronization. In the implemented project, the
+requirement was refined as follows:
+\begin{itemize}
+  \item The system shall compute a humidity-dependent color output for the
+  NeoPixel.
+  \item The color shall reflect at least three semantic humidity regions, even
+  if the implementation internally uses a continuous gradient.
+  \item The NeoPixel update shall be decoupled from sensing through a queue so
+  that the LED strip always displays the most recent humidity state.
+  \item The NeoPixel task shall support an enable/disable command and clear the
+  LED when disabled.
+\end{itemize}
+
+In the current code, humidity values are constrained to the range
+\(0\%\) to \(100\%\) and converted into a color gradient. The lower half of the
+range is represented by a transition from red to green, while the upper half is
+represented by a transition from green to blue. This means the assignment's
+``at least three levels'' condition is exceeded by a smooth visual scale.
+
+\subsection{Task 3 Requirements: LCD-Based Monitoring and RTOS
+Synchronization}
+The LCD task was extended beyond a static two-line text display. The refined
+requirements are:
+\begin{itemize}
+  \item The LCD shall display valid temperature and humidity measurements when
+  the sensor is operating normally.
+  \item The LCD shall display an error message when sensing fails.
+  \item The LCD shall support more than one display state, including a sensor
+  mode and a network-aware mode.
+  \item In STA mode, the LCD shall be able to switch between raw sensor data
+  and TinyML forecast information.
+  \item The DHT20 sensor and LCD share the same I\textsuperscript{2}C bus, so
+  access to that bus shall be protected by a mutex.
+\end{itemize}
+
+The implemented design therefore uses the LCD not only as an output device but
+also as a demonstration of synchronization. The I\textsuperscript{2}C mutex is
+one of the clearest examples in the code where a shared hardware resource is
+explicitly protected.
+
+\subsection{Task 4 Requirements: AP-Mode Web Server and User Interaction}
+The web server task is one of the most visible parts of the project and also
+one of the most functionally rich. The concrete requirements implemented in the
+current version are:
+\begin{itemize}
+  \item The board shall provide an HTTP server when running in AP mode.
+  \item The root dashboard shall show temperature, humidity, TinyML prediction,
+  Wi-Fi state, and chart history.
+  \item The web server shall provide Wi-Fi scanning so the user can list
+  available networks.
+  \item The web server shall provide storage and recall of saved Wi-Fi
+  credentials.
+  \item The interface shall provide at least two direct control actions. In
+  this project those actions are:
+  \begin{itemize}
+    \item external LED on/off toggle,
+    \item external LED brightness adjustment through a PWM slider.
+  \end{itemize}
+  \item The system shall be able to move from AP mode to STA mode using
+  browser-supplied SSID and password.
+  \item If STA connection does not succeed within the timeout window, the
+  system shall return to AP mode automatically.
+  \item Pressing the BOOT button shall force the board back to AP mode.
+\end{itemize}
+
+The web task therefore covers both UI and network-state control. This is more
+than a simple monitoring page: it acts as the configuration front-end for the
+entire device.
+
+\subsection{Task 5 Requirements: TinyML Deployment and Evaluation}
+The TinyML portion of the assignment requires a complete mini-pipeline from
+data representation to inference. The concrete requirements implemented in code
+are:
+\begin{itemize}
+  \item The system shall deploy a TensorFlow Lite Micro model on the ESP32-S3.
+  \item The TinyML task shall receive live sensor data from the RTOS pipeline.
+  \item Input features shall be transformed and normalized before inference.
+  \item The model output shall be converted into an interpretable prediction.
+  \item The prediction result shall be accessible to other tasks, especially
+  the LCD task, the web task, and the CoreIOT task.
+  \item The report shall discuss the expected inference timing and the impact
+  of batching and feature engineering on accuracy and responsiveness.
+\end{itemize}
+
+The implemented TinyML logic uses batch averaging and derived time-based
+features rather than passing raw sensor samples directly to the model. This is
+important because it shows that TinyML integration is treated as a system
+design problem, not merely as a call to an inference library
+\cite{tflm}.
+
+\subsection{Task 6 Requirements: CoreIOT Cloud Publishing}
+The cloud task is constrained by the assignment's STA-mode rule. The refined
+requirements are:
+\begin{itemize}
+  \item The board shall connect to CoreIOT only when Wi-Fi STA mode is active
+  and Internet access is available.
+  \item The device shall use a valid CoreIOT token to authenticate.
+  \item Telemetry shall include temperature and humidity, and may include
+  additional derived fields that improve observability.
+  \item The cloud task shall periodically publish data without blocking local
+  sensing and control.
+  \item The system shall subscribe to RPC messages so that a remote cloud
+  command can influence local behavior.
+\end{itemize}
+
+In the current implementation, the RPC channel is used to control whether the
+LCD should show the TinyML forecast in STA mode. This is a strong design choice
+because it demonstrates bidirectional interaction with the cloud rather than
+simple telemetry upload \cite{coreiot_platform,pubsubclient,arduinojson}.
+
+\subsection{Cross-Cutting Functional Requirements}
+Beyond the six assignment tasks, the following system-level functional
+requirements emerge from the integrated design:
+\begin{itemize}
+  \item The latest sensor sample shall be distributed to multiple consumers
+  without unnecessary duplication of acquisition logic.
+  \item The user shall be able to understand the state of the system through
+  local logs, LCD messages, and browser-visible status labels.
+  \item The system shall preserve the most recent Wi-Fi profiles across resets
+  by using non-volatile storage.
+  \item The dashboard shall plot recent sensor history rather than showing only
+  the most recent sample.
+  \item The cloud payload shall include both raw values and interpreted state
+  such as rain probability and LCD forecast mode.
+\end{itemize}
+
+\subsection{Non-Functional Requirements}
+The project also has important non-functional constraints:
+\begin{itemize}
+  \item \textbf{Real-time structure:} sensing, control, display, networking,
+  inference, and cloud publishing must coexist without unacceptable blocking.
+  \item \textbf{Responsiveness:} web interactions should feel immediate to a
+  human user, while periodic tasks should keep predictable cadence.
+  \item \textbf{Modularity:} different subsystems should be readable and
+  maintainable as separate source files and tasks.
+  \item \textbf{Reduced shared global state:} the project should avoid broad
+  global-variable usage and instead favor queues, semaphores, and protected
+  shared state.
+  \item \textbf{Fault tolerance:} the system should tolerate Wi-Fi disconnects,
+  STA connection failure, and sensor read failure without total application
+  collapse.
+  \item \textbf{Scalability:} the architecture should be extendable with more
+  sensors, more RPC methods, or richer dashboards in the future.
+\end{itemize}
+
+\subsection{Hardware and Software Environment}
+The current implementation is designed around the following hardware and
+software stack:
+\begin{itemize}
+  \item \textbf{Board:} ESP32-S3-based Yolo UNO platform.
+  \item \textbf{Sensor:} DHT20 temperature and humidity sensor on the
+  I\textsuperscript{2}C bus.
+  \item \textbf{LCD:} 16x2 I\textsuperscript{2}C LCD at address
+  \texttt{0x21}.
+  \item \textbf{Discrete LED:} GPIO48 for temperature-dependent blink logic.
+  \item \textbf{NeoPixel:} GPIO45, one RGB LED for humidity visualization.
+  \item \textbf{External user-controlled LED:} GPIO5 with PWM control from the
+  web interface.
+  \item \textbf{Build environment:} PlatformIO with Arduino framework.
+  \item \textbf{Software components:} FreeRTOS primitives, WebServer,
+  Preferences, PubSubClient, ArduinoJson, and TensorFlow Lite Micro
+  \cite{platformio,freertos_kernel,pubsubclient,arduinojson,tflm}.
+\end{itemize}
+
+These hardware and software choices define the practical limits of the system
+and shape the architecture described in the next section.

@@ -2,1078 +2,1109 @@
 #include <math.h>
 
 namespace {
-  WebServer g_server(80);
-  Preferences g_prefs;
 
-  app_context_t *g_ctx = nullptr;
-  sensor_data_t g_latestSensor = {NAN, NAN, 0};
+WebServer g_server(80);
+Preferences g_prefs;
+app_context_t *g_ctx = nullptr;
 
-  bool g_isApMode = false;
-  bool g_isStaConnecting = false;
-  bool g_serverStarted = false;
-  bool g_lastConnectFailed = false;
+sensor_data_t g_latestSensor = {NAN, NAN, 0};
+tinyml_result_t g_latestTiny = {0.0f, false, 0, 0};
+bool g_hasTinyResult = false;
 
-  unsigned long g_staConnectStartMs = 0;
-  String g_staSsid;
-  String g_staPassword;
-  String g_staIp;
+bool g_isApMode = false;
+bool g_isStaConnecting = false;
+bool g_serverStarted = false;
+unsigned long g_staConnectStartMs = 0;
+wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
 
-  static const int HISTORY_SIZE = 20;
-  float g_tempHistory[HISTORY_SIZE];
-  float g_humHistory[HISTORY_SIZE];
-  int g_historyCount = 0;
-  int g_historyHead = 0;
+String g_staSsid;
+String g_staPassword;
+String g_staIp;
 
-  struct SavedWifi {
-    String ssid;
-    String pass;
+static const int HISTORY_SIZE = 20;
+float g_tempHistory[HISTORY_SIZE] = {0};
+float g_humHistory[HISTORY_SIZE] = {0};
+int g_historyCount = 0;
+int g_historyHead = 0;
+
+struct SavedWifi {
+  String ssid;
+  String pass;
+};
+
+struct UserLightState {
+  bool isOn;
+  uint8_t brightnessPercent;
+};
+
+UserLightState g_userLight = {false, 50};
+
+String jsonEscape(const String &s) {
+  String out;
+  out.reserve(s.length() + 8);
+  for (size_t i = 0; i < s.length(); ++i) {
+    char c = s[i];
+    switch (c) {
+      case '\"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default: out += c; break;
+    }
+  }
+  return out;
+}
+
+String wifiStatusText() {
+  if (g_isApMode) return "AP MODE";
+  if (g_isStaConnecting) return "STA CONNECTING";
+  if (WiFi.status() == WL_CONNECTED) return "STA CONNECTED";
+  return "DISCONNECTED";
+}
+
+String apIpText() {
+  if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) {
+    return WiFi.softAPIP().toString();
+  }
+  return "-";
+}
+
+String staIpText() {
+  if (WiFi.status() == WL_CONNECTED) return WiFi.localIP().toString();
+  return "-";
+}
+
+int wifiQualityPercent(int32_t rssi) {
+  if (rssi <= -100) return 0;
+  if (rssi >= -50) return 100;
+  return 2 * (rssi + 100);
+}
+
+String tinymlLabel() {
+  if (!g_hasTinyResult) return "COLLECTING";
+  return g_latestTiny.isRain ? "RAIN" : "SUNNY";
+}
+
+String tinymlProbText() {
+  if (!g_hasTinyResult) return "--";
+  return String(g_latestTiny.rainProbability * 100.0f, 1);
+}
+
+void pushHistory(float t, float h) {
+  g_tempHistory[g_historyHead] = t;
+  g_humHistory[g_historyHead] = h;
+  g_historyHead = (g_historyHead + 1) % HISTORY_SIZE;
+  if (g_historyCount < HISTORY_SIZE) g_historyCount++;
+}
+
+String historyArrayJson(const float *arr) {
+  String json = "[";
+  for (int i = 0; i < g_historyCount; ++i) {
+    int index = (g_historyHead - g_historyCount + i + HISTORY_SIZE) % HISTORY_SIZE;
+    if (i > 0) json += ",";
+    json += String(arr[index], 2);
+  }
+  json += "]";
+  return json;
+}
+
+uint32_t percentToDuty(uint8_t percent) {
+  const uint32_t maxDuty = (1u << USER_LED_PWM_RESOLUTION) - 1u;
+  return (uint32_t)((percent * maxDuty) / 100u);
+}
+
+// ====== ĐIỀU KHIỂN GPIO10 NẰM Ở ĐÂY ======
+void applyUserLight() {
+  uint32_t duty = g_userLight.isOn ? percentToDuty(g_userLight.brightnessPercent) : 0;
+  ledcWrite(USER_LED_PWM_CHANNEL, duty);
+}
+
+void loadUserLightPrefs() {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, true);
+  bool on = g_prefs.getBool("usr_led_on", false);
+  int pct = g_prefs.getInt("usr_led_pct", 50);
+  g_prefs.end();
+
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+
+  g_userLight.isOn = on;
+  g_userLight.brightnessPercent = static_cast<uint8_t>(pct);
+}
+
+void saveUserLightPrefs() {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  g_prefs.putBool("usr_led_on", g_userLight.isOn);
+  g_prefs.putInt("usr_led_pct", g_userLight.brightnessPercent);
+  g_prefs.end();
+}
+
+void initUserLight() {
+  pinMode(USER_LED_GPIO, OUTPUT);
+  ledcSetup(USER_LED_PWM_CHANNEL, USER_LED_PWM_FREQ, USER_LED_PWM_RESOLUTION);
+  ledcAttachPin(USER_LED_GPIO, USER_LED_PWM_CHANNEL);
+  loadUserLightPrefs();
+  applyUserLight();
+}
+
+int getSavedCount() {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, true);
+  int count = g_prefs.getInt("count", 0);
+  g_prefs.end();
+  if (count < 0) count = 0;
+  if (count > WIFI_MAX_SAVED) count = WIFI_MAX_SAVED;
+  return count;
+}
+
+SavedWifi readSavedAt(int index) {
+  SavedWifi item;
+  g_prefs.begin(WIFI_STORE_NAMESPACE, true);
+  item.ssid = g_prefs.getString(("ssid" + String(index)).c_str(), "");
+  item.pass = g_prefs.getString(("pass" + String(index)).c_str(), "");
+  g_prefs.end();
+  return item;
+}
+
+void writeSavedAt(int index, const SavedWifi &item) {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  g_prefs.putString(("ssid" + String(index)).c_str(), item.ssid);
+  g_prefs.putString(("pass" + String(index)).c_str(), item.pass);
+  g_prefs.end();
+}
+
+void setSavedCount(int count) {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  g_prefs.putInt("count", count);
+  g_prefs.end();
+}
+
+void clearSavedWifi() {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  g_prefs.clear();
+  g_prefs.end();
+}
+
+bool loadMostRecentWifi(String &ssid, String &password) {
+  int count = getSavedCount();
+  if (count <= 0) return false;
+  SavedWifi item = readSavedAt(0);
+  ssid = item.ssid;
+  password = item.pass;
+  return !ssid.isEmpty();
+}
+
+void saveWifiRecent(const String &ssid, const String &password) {
+  if (ssid.isEmpty()) return;
+
+  SavedWifi list[WIFI_MAX_SAVED];
+  int count = getSavedCount();
+
+  for (int i = 0; i < count; ++i) {
+    list[i] = readSavedAt(i);
+  }
+
+  SavedWifi newList[WIFI_MAX_SAVED];
+  int newCount = 0;
+
+  newList[newCount++] = {ssid, password};
+
+  for (int i = 0; i < count && newCount < WIFI_MAX_SAVED; ++i) {
+    if (list[i].ssid != ssid && !list[i].ssid.isEmpty()) {
+      newList[newCount++] = list[i];
+    }
+  }
+
+  for (int i = 0; i < newCount; ++i) {
+    writeSavedAt(i, newList[i]);
+  }
+
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  for (int i = newCount; i < WIFI_MAX_SAVED; ++i) {
+    g_prefs.remove(("ssid" + String(i)).c_str());
+    g_prefs.remove(("pass" + String(i)).c_str());
+  }
+  g_prefs.end();
+
+  setSavedCount(newCount);
+}
+
+String savedWifiJson() {
+  int count = getSavedCount();
+  String json = "[";
+
+  for (int i = 0; i < count; ++i) {
+    SavedWifi item = readSavedAt(i);
+    if (i > 0) json += ",";
+    json += "{";
+    json += "\"ssid\":\"" + jsonEscape(item.ssid) + "\",";
+    json += "\"pass\":\"" + jsonEscape(item.pass) + "\"";
+    json += "}";
+  }
+
+  json += "]";
+  return json;
+}
+
+String wifiScanJson() {
+  int n = WiFi.scanNetworks(false, true);
+  String json = "[";
+
+  for (int i = 0; i < n; ++i) {
+    if (i > 0) json += ",";
+    String enc;
+
+    wifi_auth_mode_t auth = WiFi.encryptionType(i);
+    switch (auth) {
+      case WIFI_AUTH_OPEN: enc = "OPEN"; break;
+      case WIFI_AUTH_WEP: enc = "WEP"; break;
+      case WIFI_AUTH_WPA_PSK: enc = "WPA"; break;
+      case WIFI_AUTH_WPA2_PSK: enc = "WPA2"; break;
+      case WIFI_AUTH_WPA_WPA2_PSK: enc = "WPA/WPA2"; break;
+      case WIFI_AUTH_WPA2_ENTERPRISE: enc = "WPA2-ENT"; break;
+      case WIFI_AUTH_WPA3_PSK: enc = "WPA3"; break;
+      case WIFI_AUTH_WPA2_WPA3_PSK: enc = "WPA2/WPA3"; break;
+      default: enc = "UNKNOWN"; break;
+    }
+
+    json += "{";
+    json += "\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+    json += "\"quality\":" + String(wifiQualityPercent(WiFi.RSSI(i))) + ",";
+    json += "\"enc\":\"" + enc + "\"";
+    json += "}";
+  }
+
+  json += "]";
+  WiFi.scanDelete();
+  return json;
+}
+
+void ensureServerStarted() {
+  if (!g_serverStarted) {
+    g_server.begin();
+    g_serverStarted = true;
+  }
+}
+
+void notifyInternetReady() {
+  if (g_ctx == nullptr || g_ctx->internetSemaphore == nullptr) {
+    Serial.println("[Web] Cannot signal internet semaphore: invalid context");
+    return;
+  }
+
+  BaseType_t ok = xSemaphoreGive(g_ctx->internetSemaphore);
+  Serial.printf("[Web] internetSemaphore -> %s\n", ok == pdTRUE ? "GIVE OK" : "GIVE FAIL");
+}
+
+void startApMode() {
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true, true);
+  delay(200);
+
+  WiFi.mode(WIFI_AP);
+  delay(100);
+  WiFi.softAP(AP_SSID, AP_PASSWORD);
+
+  g_isApMode = true;
+  g_isStaConnecting = false;
+  g_staConnectStartMs = 0;
+  g_staIp = "";
+  g_staSsid = "";
+  g_staPassword = "";
+  app_set_wifi_connected(g_ctx, false);
+  g_lastWifiStatus = WiFi.status();
+
+  ensureServerStarted();
+
+  Serial.printf("[Web] AP mode started | mode=%d | status=%d | AP IP=%s\n",
+                WiFi.getMode(),
+                WiFi.status(),
+                WiFi.softAPIP().toString().c_str());
+}
+
+void startStaConnect(const String &ssid, const String &password) {
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true, true);
+  delay(100);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), password.c_str());
+
+  g_isApMode = false;
+  g_isStaConnecting = true;
+  g_staConnectStartMs = millis();
+  g_staSsid = ssid;
+  g_staPassword = password;
+  g_staIp = "";
+  app_set_wifi_connected(g_ctx, false);
+  g_lastWifiStatus = WiFi.status();
+
+  ensureServerStarted();
+
+  Serial.printf("[Web] STA connect start | SSID=%s | mode=%d | status=%d\n",
+                ssid.c_str(),
+                WiFi.getMode(),
+                WiFi.status());
+}
+
+String apPage() {
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 AP Dashboard</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0}
+.wrap{max-width:1100px;margin:auto;padding:20px}
+h1,h2{margin:0 0 12px 0}
+p{opacity:.9}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.card{background:#1e293b;border-radius:18px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.metric{font-size:32px;font-weight:700}
+.label{font-size:13px;opacity:.8;text-transform:uppercase;letter-spacing:.08em}
+.hero{display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:18px}
+@media(max-width:900px){.hero{grid-template-columns:1fr}}
+.btn{background:#38bdf8;border:none;color:#062033;padding:10px 14px;border-radius:12px;font-weight:700;cursor:pointer}
+.btn.secondary{background:#334155;color:#f8fafc}
+.btn.warn{background:#f59e0b;color:#1f1300}
+.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#334155;font-size:12px}
+canvas{width:100%;background:#0b1220;border-radius:14px}
+.icon{font-size:30px}
+.small{font-size:12px;opacity:.8}
+.list{display:grid;gap:8px;margin-top:10px}
+.item{padding:10px;border-radius:10px;background:#0f172a}
+.slider-wrap{display:flex;align-items:center;gap:12px;margin-top:12px}
+.slider-wrap input[type=range]{flex:1}
+.value-box{min-width:52px;text-align:center;padding:8px 10px;border-radius:10px;background:#0f172a}
+a.link{color:#7dd3fc;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="card">
+      <h1>ESP32 Climate Dashboard</h1>
+      <p>AP mode dashboard with temperature, humidity, TinyML prediction, Wi-Fi setup, chart history, and LED brightness control.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <span class="badge">AP SSID: )rawliteral";
+  html += AP_SSID;
+  html += R"rawliteral(</span>
+        <span class="badge">AP IP: <span id="apIp">-</span></span>
+        <span class="badge">Status: <span id="wifiStatus">-</span></span>
+        <a class="link" href="/settings">Wi-Fi settings</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>External LED</h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn" onclick="toggleLight()">Toggle ON/OFF</button>
+        <span class="badge">State: <span id="lightState">-</span></span>
+      </div>
+
+      <div class="slider-wrap">
+        <input type="range" id="brightnessSlider" min="0" max="100" value="50" oninput="updateSliderValue(this.value)">
+        <div class="value-box"><span id="sliderValue">50</span>%</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <button class="btn secondary" onclick="applyBrightness()">Apply Brightness</button>
+      </div>
+
+      <p class="small">Brightness only affects the LED when it is ON.</p>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-bottom:18px">
+    <div class="card">
+      <div class="label">Temperature</div>
+      <div class="metric"><span class="icon">🌡️</span> <span id="tempValue">--</span> °C</div>
+    </div>
+    <div class="card">
+      <div class="label">Humidity</div>
+      <div class="metric"><span class="icon">💧</span> <span id="humValue">--</span> %</div>
+    </div>
+    <div class="card">
+      <div class="label">TinyML Prediction</div>
+      <div class="metric"><span class="icon">🧠</span> <span id="tinyLabel">--</span></div>
+      <div class="small">Rain probability: <span id="tinyProb">--</span>%</div>
+    </div>
+    <div class="card">
+      <div class="label">Wi-Fi Target</div>
+      <div class="metric"><span class="icon">📶</span> <span id="staSsid">-</span></div>
+      <div class="small">STA IP: <span id="staIp">-</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:18px">
+    <h2>Temperature / Humidity History</h2>
+    <canvas id="chart" width="1000" height="300"></canvas>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Quick Wi-Fi Scan</h2>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn warn" onclick="loadScan()">Scan Wi-Fi</button>
+        <a class="link" href="/settings">Advanced settings</a>
+      </div>
+      <div id="scanList" class="list"></div>
+    </div>
+    <div class="card">
+      <h2>Mode Notes</h2>
+      <p class="small">BOOT button forces ESP32 back to AP mode. If STA connection fails after 10 seconds, the board automatically returns to AP mode.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+let sliderDirty = false;
+
+function updateSliderValue(val){
+  document.getElementById('sliderValue').textContent = val;
+  sliderDirty = true;
+}
+
+function drawChart(temp, hum){
+  const c = document.getElementById('chart');
+  const ctx = c.getContext('2d');
+  const tempData = Array.isArray(temp) ? temp.map(v => Number(v)) : [];
+  const humData = Array.isArray(hum) ? hum.map(v => Number(v)) : [];
+  const sampleCount = Math.max(tempData.length, humData.length);
+  const sampleIntervalSec = 2;
+
+  const plot = { left: 72, right: c.width - 72, top: 26, bottom: c.height - 40 };
+  const plotWidth = plot.right - plot.left;
+  const plotHeight = plot.bottom - plot.top;
+
+  const getRange = (arr, fallbackMin, fallbackMax) => {
+    const valid = arr.filter(Number.isFinite);
+    if (!valid.length) {
+      return { min: fallbackMin, max: fallbackMax };
+    }
+
+    let min = Math.min(...valid);
+    let max = Math.max(...valid);
+
+    if (min === max) {
+      const pad = Math.max(1, Math.abs(min) * 0.1);
+      min -= pad;
+      max += pad;
+    } else {
+      const pad = (max - min) * 0.15;
+      min -= pad;
+      max += pad;
+    }
+
+    return { min, max };
   };
 
-  String jsonEscape(const String &s) {
-    String out;
-    out.reserve(s.length() + 8);
-    for (size_t i = 0; i < s.length(); ++i) {
-      char c = s[i];
-      switch (c) {
-        case '\"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default: out += c; break;
-      }
+  const tempRange = getRange(tempData, 20, 40);
+  const humRange = getRange(humData, 30, 90);
+
+  const getX = index => {
+    if (sampleCount <= 1) {
+      return plot.left + plotWidth / 2;
     }
-    return out;
-  }
+    return plot.left + (index * plotWidth) / (sampleCount - 1);
+  };
 
-  String wifiStatusText() {
-    if (g_isApMode) return "AP MODE";
-    if (g_isStaConnecting) return "STA CONNECTING";
-    if (WiFi.status() == WL_CONNECTED) return "STA CONNECTED";
-    return "DISCONNECTED";
-  }
+  const getY = (value, range) =>
+    plot.bottom - ((value - range.min) / (range.max - range.min)) * plotHeight;
 
-  String apIpText() {
-    if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) {
-      return WiFi.softAPIP().toString();
-    }
-    return "-";
-  }
+  const drawSeries = (arr, color, range) => {
+    let hasPoint = false;
+    let started = false;
 
-  String staIpText() {
-    if (WiFi.status() == WL_CONNECTED) return WiFi.localIP().toString();
-    return "-";
-  }
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
 
-  int wifiQualityPercent(int32_t rssi) {
-    if (rssi <= -100) return 0;
-    if (rssi >= -50) return 100;
-    return 2 * (rssi + 100);
-  }
-
-  String classifyWeatherText(float t, float h) {
-    if (isnan(t) || isnan(h)) return "NO DATA";
-    if (t >= 35.0f || h >= 85.0f) return "CRITICAL";
-    if ((t >= 30.0f && t < 35.0f) || h >= 70.0f) return "WARNING";
-    if (t >= 20.0f && t < 30.0f && h >= 40.0f && h < 70.0f) return "NORMAL";
-    if (t < 20.0f) return "COOL";
-    return "NORMAL";
-  }
-
-  int getSavedCount() {
-    g_prefs.begin(WIFI_STORE_NAMESPACE, true);
-    int count = g_prefs.getInt("count", 0);
-    g_prefs.end();
-    if (count < 0) count = 0;
-    if (count > WIFI_MAX_SAVED) count = WIFI_MAX_SAVED;
-    return count;
-  }
-
-  SavedWifi readSavedAt(int index) {
-    SavedWifi item;
-    g_prefs.begin(WIFI_STORE_NAMESPACE, true);
-    item.ssid = g_prefs.getString(("ssid" + String(index)).c_str(), "");
-    item.pass = g_prefs.getString(("pass" + String(index)).c_str(), "");
-    g_prefs.end();
-    return item;
-  }
-
-  void writeSavedAt(int index, const SavedWifi &item) {
-    g_prefs.begin(WIFI_STORE_NAMESPACE, false);
-    g_prefs.putString(("ssid" + String(index)).c_str(), item.ssid);
-    g_prefs.putString(("pass" + String(index)).c_str(), item.pass);
-    g_prefs.end();
-  }
-
-  void setSavedCount(int count) {
-    g_prefs.begin(WIFI_STORE_NAMESPACE, false);
-    g_prefs.putInt("count", count);
-    g_prefs.end();
-  }
-
-  void clearSavedWifi() {
-    g_prefs.begin(WIFI_STORE_NAMESPACE, false);
-    g_prefs.clear();
-    g_prefs.end();
-  }
-
-  bool loadMostRecentWifi(String &ssid, String &password) {
-    int count = getSavedCount();
-    if (count <= 0) return false;
-
-    SavedWifi item = readSavedAt(0);
-    ssid = item.ssid;
-    password = item.pass;
-    return !ssid.isEmpty();
-  }
-
-  void saveWifiRecent(const String &ssid, const String &password) {
-    if (ssid.isEmpty()) return;
-
-    SavedWifi list[WIFI_MAX_SAVED];
-    int count = getSavedCount();
-
-    for (int i = 0; i < count; ++i) {
-      list[i] = readSavedAt(i);
-    }
-
-    SavedWifi newList[WIFI_MAX_SAVED];
-    int newCount = 0;
-
-    newList[newCount++] = {ssid, password};
-
-    for (int i = 0; i < count && newCount < WIFI_MAX_SAVED; ++i) {
-      if (list[i].ssid != ssid && !list[i].ssid.isEmpty()) {
-        newList[newCount++] = list[i];
-      }
-    }
-
-    for (int i = 0; i < newCount; ++i) {
-      writeSavedAt(i, newList[i]);
-    }
-
-    g_prefs.begin(WIFI_STORE_NAMESPACE, false);
-    for (int i = newCount; i < WIFI_MAX_SAVED; ++i) {
-      g_prefs.remove(("ssid" + String(i)).c_str());
-      g_prefs.remove(("pass" + String(i)).c_str());
-    }
-    g_prefs.end();
-
-    setSavedCount(newCount);
-  }
-
-  String savedWifiJson() {
-    int count = getSavedCount();
-    String json = "[";
-    for (int i = 0; i < count; ++i) {
-      SavedWifi item = readSavedAt(i);
-      if (i > 0) json += ",";
-      json += "{";
-      json += "\"ssid\":\"" + jsonEscape(item.ssid) + "\",";
-      json += "\"pass\":\"" + jsonEscape(item.pass) + "\",";
-      json += "\"hasPassword\":" + String(item.pass.isEmpty() ? "false" : "true");
-      json += "}";
-    }
-    json += "]";
-    return json;
-  }
-
-  String wifiScanJson() {
-    int n = WiFi.scanNetworks(false, true);
-    String json = "[";
-
-    for (int i = 0; i < n; ++i) {
-      if (i > 0) json += ",";
-
-      String enc;
-      wifi_auth_mode_t auth = WiFi.encryptionType(i);
-      switch (auth) {
-        case WIFI_AUTH_OPEN: enc = "OPEN"; break;
-        case WIFI_AUTH_WEP: enc = "WEP"; break;
-        case WIFI_AUTH_WPA_PSK: enc = "WPA"; break;
-        case WIFI_AUTH_WPA2_PSK: enc = "WPA2"; break;
-        case WIFI_AUTH_WPA_WPA2_PSK: enc = "WPA/WPA2"; break;
-        case WIFI_AUTH_WPA2_ENTERPRISE: enc = "WPA2-ENT"; break;
-        case WIFI_AUTH_WPA3_PSK: enc = "WPA3"; break;
-        case WIFI_AUTH_WPA2_WPA3_PSK: enc = "WPA2/WPA3"; break;
-        default: enc = "UNKNOWN"; break;
+    for (let i = 0; i < sampleCount; i++) {
+      const value = arr[i];
+      if (!Number.isFinite(value)) {
+        started = false;
+        continue;
       }
 
-      json += "{";
-      json += "\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
-      json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
-      json += "\"enc\":\"" + enc + "\"";
-      json += "}";
+      const x = getX(i);
+      const y = getY(value, range);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+      hasPoint = true;
     }
 
-    json += "]";
-    WiFi.scanDelete();
-    return json;
-  }
-
-  void pushHistory(float t, float h) {
-    g_tempHistory[g_historyHead] = t;
-    g_humHistory[g_historyHead] = h;
-    g_historyHead = (g_historyHead + 1) % HISTORY_SIZE;
-    if (g_historyCount < HISTORY_SIZE) g_historyCount++;
-  }
-
-  String apPage() {
-    String html = R"rawliteral(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ESP32 AP Setup</title>
-  <style>
-    body{margin:0;font-family:Arial,sans-serif;background:#f3f6fb;color:#1e293b}
-    .wrap{max-width:720px;margin:30px auto;padding:18px}
-    .card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.08)}
-    h1{margin-top:0;font-size:26px}
-    .small{color:#64748b;line-height:1.6}
-    .btn{display:inline-block;margin-top:14px;padding:11px 14px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:700}
-    .info{margin-top:14px;padding:12px;background:#eff6ff;border-radius:10px}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h1>ESP32 Wi-Fi Setup</h1>
-      <div class="small">This mode is used to configure your Wi-Fi credentials before switching to STA mode.</div>
-
-      <div class="info">
-        <div><b>AP SSID:</b> )rawliteral";
-    html += AP_SSID;
-    html += R"rawliteral(</div>
-        <div><b>AP IP:</b> )rawliteral";
-    html += apIpText();
-    html += R"rawliteral(</div>
-      </div>
-
-      <a class="btn" href="/settings">Open Wi-Fi Settings</a>
-    </div>
-  </div>
-</body>
-</html>
-)rawliteral";
-    return html;
-  }
-
-  String staPage() {
-    String html = R"rawliteral(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ESP32 Dashboard</title>
-  <style>
-    :root{
-      --bg:#eef3f9;
-      --card:#ffffff;
-      --text:#0f172a;
-      --muted:#64748b;
-      --line:#dbe4ee;
-      --accent:#2563eb;
-      --accent2:#0ea5e9;
-      --ok:#16a34a;
+    if (hasPoint) {
+      ctx.stroke();
     }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Arial,sans-serif;background:linear-gradient(180deg,#f7fbff 0%,var(--bg) 100%);color:var(--text)}
-    .wrap{max-width:1000px;margin:0 auto;padding:16px}
-    .top,.card{background:var(--card);border-radius:18px;box-shadow:0 6px 18px rgba(15,23,42,.07)}
-    .top{padding:18px 18px 16px 18px;margin-bottom:16px}
-    .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
-    .headline{margin:0 0 6px 0;font-size:28px}
-    .muted{color:var(--muted);font-size:14px;line-height:1.6}
-    .actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
-    .btn{display:inline-block;padding:10px 14px;background:var(--accent);color:#fff;text-decoration:none;border-radius:10px;font-weight:700}
-    .btn.secondary{background:#475569}
-    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-    .card{padding:18px}
-    .metricTitle{color:var(--muted);font-size:14px}
-    .value{font-size:38px;font-weight:800;margin-top:8px;letter-spacing:-.02em}
-    .unit{font-size:18px;font-weight:700;color:var(--muted)}
-    .statusPill{display:inline-block;padding:8px 12px;border-radius:999px;background:#ecfdf5;color:#166534;font-weight:700;font-size:13px}
-    .mini{padding:12px;background:#f8fbff;border:1px solid #e6edf5;border-radius:12px;min-height:68px}
-    .mini b{display:block;margin-bottom:6px;font-size:13px;color:var(--muted)}
-    .mini span{font-size:17px;font-weight:700;color:var(--text)}
-    .chartWrap{margin-top:16px}
-    .chartCardTitle{margin-bottom:10px;font-size:15px;font-weight:700}
-    .chartSub{margin-top:-2px;margin-bottom:10px;color:var(--muted);font-size:13px}
-    canvas{display:block;width:100%;height:220px;background:#fff;border-radius:12px;border:1px solid var(--line)}
-    .footerNote{margin-top:10px;color:var(--muted);font-size:12px}
-    @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div class="topbar">
-        <div>
-          <h1 class="headline">ESP32 Climate Dashboard</h1>
-          <div class="muted">Station mode dashboard for temperature and humidity monitoring with lightweight real-time charts.</div>
-          <div class="actions">
-            <a class="btn" href="/settings">Wi-Fi Settings</a>
-            <a class="btn secondary" href="/forget">Forget saved Wi-Fi</a>
-          </div>
-        </div>
-        <div>
-          <div class="statusPill" id="modeText">-</div>
-        </div>
-      </div>
-    </div>
 
-    <div class="grid2">
-      <div class="card">
-        <div class="metricTitle">🌡️ Temperature</div>
-        <div class="value"><span id="tempText">--</span> <span class="unit">°C</span></div>
-      </div>
-      <div class="card">
-        <div class="metricTitle">💧 Humidity</div>
-        <div class="value"><span id="humText">--</span> <span class="unit">%</span></div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <div class="grid3">
-        <div class="mini"><b>System status</b><span id="weatherText">-</span></div>
-        <div class="mini"><b>Current time</b><span id="timeText">--:--:--</span></div>
-        <div class="mini"><b>STA IP</b><span id="staIpText">-</span></div>
-        <div class="mini"><b>SSID</b><span id="ssidText">-</span></div>
-        <div class="mini"><b>Latest sample</b><span>20 points</span></div>
-        <div class="mini"><b>XAxis unit</b><span>Recent samples</span></div>
-      </div>
-    </div>
-
-    <div class="grid2 chartWrap">
-      <div class="card">
-        <div class="chartCardTitle">Temperature chart</div>
-        <div class="chartSub">Y-axis: °C &nbsp; | &nbsp; X-axis: 20 most recent samples</div>
-        <canvas id="tempChart" width="460" height="220"></canvas>
-        <div class="footerNote">Shows up to the latest 20 temperature readings.</div>
-      </div>
-      <div class="card">
-        <div class="chartCardTitle">Humidity chart</div>
-        <div class="chartSub">Y-axis: %RH &nbsp; | &nbsp; X-axis: 20 most recent samples</div>
-        <canvas id="humChart" width="460" height="220"></canvas>
-        <div class="footerNote">Shows up to the latest 20 humidity readings.</div>
-      </div>
-    </div>
-  </div>
-
-<script>
-const tempCanvas = document.getElementById('tempChart');
-const humCanvas  = document.getElementById('humChart');
-
-function pad2(n){ return String(n).padStart(2,'0'); }
-function updateClock(){
-  const now = new Date();
-  const txt = pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
-  document.getElementById('timeText').innerText = txt;
-}
-
-function formatValue(v, digits=1){
-  return (v === null || v === undefined) ? '--' : Number(v).toFixed(digits);
-}
-
-function niceStep(range){
-  if (range <= 5) return 1;
-  if (range <= 10) return 2;
-  if (range <= 20) return 5;
-  if (range <= 50) return 10;
-  return 20;
-}
-
-function drawAxisChart(canvas, values, options){
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-
-  const left = 44;
-  const right = 12;
-  const top = 12;
-  const bottom = 30;
-  const cw = w - left - right;
-  const ch = h - top - bottom;
-
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0,0,w,h);
-
-  const clean = values.filter(v => v !== null && !Number.isNaN(v));
-  let minV = options.defaultMin;
-  let maxV = options.defaultMax;
-
-  if (clean.length) {
-    minV = Math.min(...clean);
-    maxV = Math.max(...clean);
-    if (minV === maxV) {
-      minV -= options.flatPadding;
-      maxV += options.flatPadding;
-    } else {
-      minV -= options.pad;
-      maxV += options.pad;
+    for (let i = 0; i < sampleCount; i++) {
+      const value = arr[i];
+      if (!Number.isFinite(value)) continue;
+      const x = getX(i);
+      const y = getY(value, range);
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
     }
-  }
+  };
 
-  if (options.clampMin !== null) minV = Math.min(minV, options.clampMin);
-  if (options.clampMax !== null) maxV = Math.max(maxV, options.clampMax);
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(0, 0, c.width, c.height);
 
-  const stepY = niceStep(maxV - minV);
-  const axisMin = Math.floor(minV / stepY) * stepY;
-  const axisMax = Math.ceil(maxV / stepY) * stepY;
-  const axisRange = Math.max(1, axisMax - axisMin);
-
-  ctx.strokeStyle = '#dbe4ee';
+  ctx.strokeStyle = '#334155';
   ctx.lineWidth = 1;
-  ctx.fillStyle = '#64748b';
-  ctx.font = '11px Arial';
+  for (let i = 0; i <= 4; i++) {
+    const y = plot.top + (i * plotHeight) / 4;
+    ctx.beginPath();
+    ctx.moveTo(plot.left, y);
+    ctx.lineTo(plot.right, y);
+    ctx.stroke();
+  }
 
   for (let i = 0; i <= 4; i++) {
-    const y = top + (ch * i / 4);
+    const x = plot.left + (i * plotWidth) / 4;
     ctx.beginPath();
-    ctx.moveTo(left, y);
-    ctx.lineTo(w - right, y);
+    ctx.moveTo(x, plot.top);
+    ctx.lineTo(x, plot.bottom);
     ctx.stroke();
-
-    const labelValue = axisMax - (axisRange * i / 4);
-    ctx.fillText(labelValue.toFixed(options.yDigits), 4, y + 4);
   }
 
+  ctx.strokeStyle = '#64748b';
   ctx.beginPath();
-  ctx.moveTo(left, top);
-  ctx.lineTo(left, h - bottom);
-  ctx.lineTo(w - right, h - bottom);
-  ctx.strokeStyle = '#94a3b8';
+  ctx.moveTo(plot.left, plot.bottom);
+  ctx.lineTo(plot.right, plot.bottom);
+  ctx.moveTo(plot.left, plot.top);
+  ctx.lineTo(plot.left, plot.bottom);
+  ctx.moveTo(plot.right, plot.top);
+  ctx.lineTo(plot.right, plot.bottom);
   ctx.stroke();
 
-  const count = values.length;
-  const stepX = count > 1 ? cw / (count - 1) : cw;
-  const xLabels = [0, 4, 9, 14, 19];
-  ctx.fillStyle = '#64748b';
-  xLabels.forEach(i => {
-    if (i >= count) return;
-    const x = left + i * stepX;
-    ctx.fillText(String(i + 1), x - 4, h - 10);
-  });
+  ctx.font = '12px Arial';
+  ctx.textBaseline = 'middle';
 
-  function mapY(v){
-    return top + ((axisMax - v) / axisRange) * ch;
+  const drawAxisLabels = (range, x, color, align, suffix) => {
+    const values = [range.max, (range.max + range.min) / 2, range.min];
+    const positions = [plot.top, (plot.top + plot.bottom) / 2, plot.bottom];
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    values.forEach((value, index) => {
+      ctx.fillText(`${value.toFixed(1)}${suffix}`, x, positions[index]);
+    });
+  };
+
+  drawAxisLabels(tempRange, plot.left - 10, '#22d3ee', 'right', 'C');
+  drawAxisLabels(humRange, plot.right + 10, '#4ade80', 'left', '%');
+
+  ctx.fillStyle = '#cbd5e1';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= 4; i++) {
+    const x = plot.left + (i * plotWidth) / 4;
+    const sampleIndex = sampleCount <= 1 ? 0 : Math.round((i * (sampleCount - 1)) / 4);
+    const secondsAgo = (sampleCount - 1 - sampleIndex) * sampleIntervalSec;
+    ctx.fillText(`-${secondsAgo}s`, x, plot.bottom + 8);
   }
 
-  ctx.beginPath();
-  let started = false;
-  values.forEach((v, i) => {
-    if (v === null || Number.isNaN(v)) return;
-    const x = left + i * stepX;
-    const y = mapY(v);
-    if (!started) {
-      ctx.moveTo(x, y);
-      started = true;
-    } else {
-      ctx.lineTo(x, y);
-    }
-  });
-  ctx.strokeStyle = options.lineColor;
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  ctx.fillStyle = '#22d3ee';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Temp (C)', plot.left, 6);
 
-  ctx.fillStyle = options.lineColor;
-  values.forEach((v, i) => {
-    if (v === null || Number.isNaN(v)) return;
-    const x = left + i * stepX;
-    const y = mapY(v);
-    ctx.beginPath();
-    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+  ctx.fillStyle = '#4ade80';
+  ctx.textAlign = 'right';
+  ctx.fillText('Humidity (%)', plot.right, 6);
+
+  if (!sampleCount) {
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Waiting for sensor history...', c.width / 2, c.height / 2);
+    return;
+  }
+
+  drawSeries(tempData, '#22d3ee', tempRange);
+  drawSeries(humData, '#4ade80', humRange);
+}
+
+async function loadState(){
+  const res = await fetch('/api/state');
+  const s = await res.json();
+
+  document.getElementById('tempValue').textContent = s.temperatureText;
+  document.getElementById('humValue').textContent = s.humidityText;
+  document.getElementById('tinyLabel').textContent = s.tinyLabel;
+  document.getElementById('tinyProb').textContent = s.tinyProbability;
+  document.getElementById('wifiStatus').textContent = s.wifiStatus;
+  document.getElementById('apIp').textContent = s.apIp;
+  document.getElementById('staIp').textContent = s.staIp;
+  document.getElementById('staSsid').textContent = s.staSsid || '-';
+  document.getElementById('lightState').textContent = s.userLightOn ? 'ON' : 'OFF';
+
+  const slider = document.getElementById('brightnessSlider');
+  if (!sliderDirty && document.activeElement !== slider) {
+    slider.value = s.userLightBrightness;
+    document.getElementById('sliderValue').textContent = s.userLightBrightness;
+  }
+
+  drawChart(s.tempHistory, s.humHistory);
+}
+
+async function toggleLight(){
+  await fetch('/api/light/toggle', {method:'POST'});
+  await loadState();
+}
+
+async function applyBrightness(){
+  const val = document.getElementById('brightnessSlider').value;
+  await fetch('/api/light/brightness', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'value=' + encodeURIComponent(val)
+  });
+  sliderDirty = false;
+  await loadState();
+}
+
+async function loadScan(){
+  const res = await fetch('/api/scan');
+  const arr = await res.json();
+  const box = document.getElementById('scanList');
+  box.innerHTML = '';
+  if(!arr.length){
+    box.innerHTML = '<div class="item">No networks found.</div>';
+    return;
+  }
+  arr.forEach(w=>{
+    const div=document.createElement('div');
+    div.className='item';
+    div.textContent = `${w.ssid || '(hidden)'} | ${w.quality}% | ${w.enc}`;
+    box.appendChild(div);
   });
 }
 
-async function refreshDashboard(){
-  try {
-    const r = await fetch('/api/state');
-    const d = await r.json();
-
-    document.getElementById('tempText').innerText = formatValue(d.temp, 1);
-    document.getElementById('humText').innerText = formatValue(d.hum, 1);
-    document.getElementById('weatherText').innerText = d.weather || '-';
-    document.getElementById('modeText').innerText = d.mode || '-';
-    document.getElementById('staIpText').innerText = d.staIp || '-';
-    document.getElementById('ssidText').innerText = d.ssid || '-';
-
-    drawAxisChart(tempCanvas, d.historyTemp || [], {
-      lineColor: '#ef4444',
-      defaultMin: 20,
-      defaultMax: 40,
-      pad: 1,
-      flatPadding: 1,
-      clampMin: null,
-      clampMax: null,
-      yDigits: 0
-    });
-
-    drawAxisChart(humCanvas, d.historyHum || [], {
-      lineColor: '#0ea5e9',
-      defaultMin: 0,
-      defaultMax: 100,
-      pad: 3,
-      flatPadding: 2,
-      clampMin: 0,
-      clampMax: 100,
-      yDigits: 0
-    });
-  } catch (e) {
-    console.log(e);
-  }
-}
-
-updateClock();
-refreshDashboard();
-setInterval(updateClock, 1000);
-setInterval(refreshDashboard, 2500);
+loadState();
+setInterval(loadState, 2000);
 </script>
 </body>
 </html>
 )rawliteral";
-    return html;
-  }
+  return html;
+}
 
-  String settingsPage() {
-    String html = R"rawliteral(
+String staPage() {
+  String html = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Wi-Fi Settings</title>
-  <style>
-    body { margin: 0; font-family: Arial, sans-serif; background: #f4f7fb; color: #1f2937; }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 20px; }
-    .card { background: white; border-radius: 16px; padding: 18px; box-shadow: 0 4px 16px rgba(0,0,0,0.07); margin-bottom: 16px; }
-    input { width: 100%; padding: 12px; margin: 8px 0 14px 0; box-sizing: border-box; border-radius: 10px; border: 1px solid #cbd5e1; font-size: 15px; }
-    button { border: none; border-radius: 10px; padding: 10px 14px; background: #2563eb; color: white; cursor: pointer; font-weight: 600; margin-right: 10px; margin-top: 6px; }
-    button.secondary { background: #475569; }
-    .wifiItem { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .small { color: #64748b; font-size: 14px; line-height: 1.6; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 STA Info</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0}
+.wrap{max-width:800px;margin:auto;padding:24px}
+.card{background:#1e293b;border-radius:18px;padding:18px}
+.badge{display:inline-block;padding:8px 12px;border-radius:999px;background:#334155;margin:4px 6px 4px 0}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Wi-Fi Settings</h1>
-      <p class="small">Scan nearby networks, review saved credentials, and configure the connection for STA mode.</p>
-      <a href="/"><button class="secondary">Back</button></a>
-    </div>
+<div class="wrap">
+  <div class="card">
+    <h1>ESP32 Station Mode</h1>
+    <div class="badge">Status: )rawliteral";
+  html += wifiStatusText();
+  html += R"rawliteral(</div>
+    <div class="badge">SSID: )rawliteral";
+  html += jsonEscape(g_staSsid);
+  html += R"rawliteral(</div>
+    <div class="badge">IP: )rawliteral";
+  html += staIpText();
+  html += R"rawliteral(</div>
+  </div>
+</div>
+</body>
+</html>
+)rawliteral";
+  return html;
+}
 
-    <div class="grid">
-      <div class="card">
-        <h2>Available Wi-Fi Networks</h2>
-        <p class="small">Use the scan function to detect nearby wireless networks.</p>
-        <button onclick="scanWifi()">Scan Wi-Fi</button>
-        <div id="wifiList" class="small" style="margin-top:12px;">No scan results available.</div>
-      </div>
-
-      <div class="card">
-        <h2>Saved Wi-Fi Profiles</h2>
-        <p class="small">Previously saved credentials can be reused for faster configuration.</p>
-        <button onclick="loadSaved()">Refresh Saved</button>
-        <div id="savedList" class="small" style="margin-top:12px;">No saved profiles found.</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Connect to Wi-Fi</h2>
-      <p class="small">Enter the network credentials below and submit to establish a connection.</p>
-      <form id="wifiForm">
-        <label>SSID</label>
-        <input id="ssid" type="text" placeholder="Enter Wi-Fi SSID" required />
-
-        <label>Password</label>
-        <input id="pass" type="password" placeholder="Enter Wi-Fi password" />
-
-        <button type="submit">Connect & Save</button>
-      </form>
-      <p class="small">Selecting a saved profile will automatically fill in both the SSID and password fields.</p>
-    </div>
+String settingsPage() {
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wi-Fi Settings</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0}
+.wrap{max-width:960px;margin:auto;padding:20px}
+.card{background:#1e293b;border-radius:18px;padding:16px;margin-bottom:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.btn{background:#38bdf8;border:none;color:#062033;padding:10px 14px;border-radius:12px;font-weight:700;cursor:pointer}
+.btn.secondary{background:#334155;color:#f8fafc}
+input{width:100%;padding:10px;border-radius:10px;border:1px solid #475569;background:#0f172a;color:#fff}
+.list{display:grid;gap:8px;margin-top:10px}
+.item{padding:10px;border-radius:10px;background:#0f172a}
+a{color:#7dd3fc;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Wi-Fi Settings</h1>
+    <a href="/">Back to dashboard</a>
   </div>
 
+  <div class="card">
+    <h2>Available Wi-Fi Networks</h2>
+    <div class="row">
+      <button class="btn" onclick="loadScan()">Scan Wi-Fi</button>
+    </div>
+    <div id="scanList" class="list"></div>
+  </div>
+
+  <div class="card">
+    <h2>Saved Wi-Fi Profiles</h2>
+    <div class="row">
+      <button class="btn secondary" onclick="loadSaved()">Refresh Saved</button>
+      <button class="btn secondary" onclick="forgetAll()">Forget All</button>
+    </div>
+    <div id="savedList" class="list"></div>
+  </div>
+
+  <div class="card">
+    <h2>Connect to Wi-Fi</h2>
+    <form method="POST" action="/connect">
+      <div class="row">
+        <input id="ssid" name="ssid" placeholder="SSID">
+        <input id="password" name="password" placeholder="Password">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" type="submit">Connect & Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script>
-  function scanWifi() {
-    document.getElementById('wifiList').innerText = 'Scanning nearby Wi-Fi networks...';
-    fetch('/scan')
-      .then(r => r.json())
-      .then(list => {
-        const box = document.getElementById('wifiList');
-        if (!list.length) {
-          box.innerText = 'No Wi-Fi networks were detected.';
-          return;
-        }
+function fillWifi(ssid, pass){
+  document.getElementById('ssid').value = ssid || '';
+  document.getElementById('password').value = pass || '';
+}
 
-        box.innerHTML = '';
-        list.forEach(item => {
-          const div = document.createElement('div');
-          div.className = 'wifiItem';
-
-          const left = document.createElement('div');
-          left.innerHTML = '<b>' + (item.ssid || '(Hidden SSID)') + '</b><br><span class="small">RSSI: ' + item.rssi + ' dBm | Security: ' + item.enc + '</span>';
-
-          const right = document.createElement('div');
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.innerText = 'Use';
-          btn.onclick = function() {
-            document.getElementById('ssid').value = item.ssid;
-            document.getElementById('pass').value = '';
-            document.getElementById('pass').focus();
-          };
-          right.appendChild(btn);
-
-          div.appendChild(left);
-          div.appendChild(right);
-          box.appendChild(div);
-        });
-      });
+async function loadScan(){
+  const res = await fetch('/api/scan');
+  const arr = await res.json();
+  const box = document.getElementById('scanList');
+  box.innerHTML = '';
+  if(!arr.length){
+    box.innerHTML = '<div class="item">No scan results available.</div>';
+    return;
   }
-
-  function loadSaved() {
-    document.getElementById('savedList').innerText = 'Loading saved Wi-Fi profiles...';
-    fetch('/saved')
-      .then(r => r.json())
-      .then(list => {
-        const box = document.getElementById('savedList');
-        if (!list.length) {
-          box.innerText = 'No saved Wi-Fi profiles are available.';
-          return;
-        }
-
-        box.innerHTML = '';
-        list.forEach(item => {
-          const div = document.createElement('div');
-          div.className = 'wifiItem';
-
-          const left = document.createElement('div');
-          left.innerHTML = '<b>' + item.ssid + '</b><br><span class="small">' + (item.hasPassword ? 'Password stored' : 'No password stored') + '</span>';
-
-          const right = document.createElement('div');
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.innerText = 'Use';
-          btn.onclick = function() {
-            document.getElementById('ssid').value = item.ssid || '';
-            document.getElementById('pass').value = item.pass || '';
-          };
-          right.appendChild(btn);
-
-          div.appendChild(left);
-          div.appendChild(right);
-          box.appendChild(div);
-        });
-      });
-  }
-
-  document.getElementById('wifiForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    const ssid = document.getElementById('ssid').value;
-    const pass = document.getElementById('pass').value;
-    window.location.href = '/connect-page?ssid=' + encodeURIComponent(ssid) + '&pass=' + encodeURIComponent(pass);
+  arr.forEach(w=>{
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<b>${w.ssid || '(hidden)'}</b> | ${w.quality}% | ${w.enc}
+                     <div style="margin-top:8px"><button class="btn secondary" onclick="fillWifi('${(w.ssid || '').replace(/'/g,"\\'")}', '')">Use</button></div>`;
+    box.appendChild(div);
   });
+}
 
+async function loadSaved(){
+  const res = await fetch('/api/saved');
+  const arr = await res.json();
+  const box = document.getElementById('savedList');
+  box.innerHTML = '';
+  if(!arr.length){
+    box.innerHTML = '<div class="item">No saved profiles found.</div>';
+    return;
+  }
+  arr.forEach(w=>{
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<b>${w.ssid}</b>
+                     <div style="margin-top:8px"><button class="btn secondary" onclick="fillWifi('${w.ssid.replace(/'/g,"\\'")}','${(w.pass || '').replace(/'/g,"\\'")}')">Use saved profile</button></div>`;
+    box.appendChild(div);
+  });
+}
+
+async function forgetAll(){
+  await fetch('/forget', {method:'POST'});
   loadSaved();
+}
+
+loadSaved();
 </script>
 </body>
 </html>
 )rawliteral";
-    return html;
-  }
+  return html;
+}
 
-  String connectPage(const String &ssid, const String &pass) {
-    String html = R"rawliteral(
+String connectPage(const String &ssid) {
+  String html = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Connecting...</title>
-  <style>
-    body { margin: 0; font-family: Arial, sans-serif; background: #f4f7fb; color: #1f2937; }
-    .wrap { max-width: 720px; margin: 40px auto; padding: 20px; }
-    .card { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.07); }
-    .small { color: #64748b; font-size: 14px; line-height: 1.6; }
-    .ok { color: #059669; font-weight: bold; }
-    .warn { color: #d97706; font-weight: bold; }
-    .err { color: #dc2626; font-weight: bold; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connecting</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0}
+.wrap{max-width:760px;margin:auto;padding:24px}
+.card{background:#1e293b;border-radius:18px;padding:18px}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>Connecting to Wi-Fi</h1>
-      <p class="small">The ESP32 will now attempt to connect to the selected wireless network.</p>
-      <p><b>SSID:</b> )rawliteral";
-    html += jsonEscape(ssid);
-    html += R"rawliteral(</p>
-      <p id="status" class="warn">Sending connection request...</p>
-      <p id="hint" class="small"></p>
-    </div>
+<div class="wrap">
+  <div class="card">
+    <h1>Connecting to Wi-Fi</h1>
+    <p>ESP32 is trying to connect to SSID: <b>)rawliteral";
+  html += jsonEscape(ssid);
+  html += R"rawliteral(</b></p>
+    <p>If no link is established within 10 seconds, the board automatically returns to AP mode.</p>
+    <p><a href="/">Back</a></p>
   </div>
-
-<script>
-  const ssid = )rawliteral";
-    html += "\"" + jsonEscape(ssid) + "\"";
-    html += R"rawliteral(;
-  const pass = )rawliteral";
-    html += "\"" + jsonEscape(pass) + "\"";
-    html += R"rawliteral(;
-
-  async function beginConnect() {
-    try {
-      const r = await fetch('/connect-start?ssid=' + encodeURIComponent(ssid) + '&pass=' + encodeURIComponent(pass));
-      const txt = await r.text();
-      document.getElementById('status').innerText = txt;
-      setTimeout(checkStatus, 1200);
-    } catch (e) {
-      document.getElementById('status').className = 'err';
-      document.getElementById('status').innerText = 'Unable to send the connection request.';
-    }
-  }
-
-  async function checkStatus() {
-    try {
-      const r = await fetch('/connect-status');
-      const d = await r.json();
-
-      if (d.state === 'connecting') {
-        document.getElementById('status').className = 'warn';
-        document.getElementById('status').innerText = 'The ESP32 is connecting to the selected Wi-Fi network...';
-        setTimeout(checkStatus, 1500);
-        return;
-      }
-
-      if (d.state === 'connected') {
-        document.getElementById('status').className = 'ok';
-        document.getElementById('status').innerText = 'Connection established successfully. New IP: ' + d.staIp;
-        document.getElementById('hint').innerText =
-          'If the page does not open automatically, connect your computer to the same Wi-Fi network and visit: http://' + d.staIp + '/';
-        setTimeout(() => {
-          window.location.href = 'http://' + d.staIp + '/';
-        }, 1200);
-        return;
-      }
-
-      if (d.state === 'failed') {
-        document.getElementById('status').className = 'err';
-        document.getElementById('status').innerText = 'The connection attempt failed. The ESP32 has returned to AP mode.';
-        document.getElementById('hint').innerText = 'Please go back to the Wi-Fi settings page and try again.';
-        return;
-      }
-
-      document.getElementById('status').className = 'warn';
-      document.getElementById('status').innerText = 'Waiting for connection status...';
-      setTimeout(checkStatus, 1500);
-    } catch (e) {
-      document.getElementById('status').className = 'warn';
-      document.getElementById('status').innerText = 'Waiting for a response from the ESP32...';
-      setTimeout(checkStatus, 1500);
-    }
-  }
-
-  beginConnect();
-</script>
+</div>
 </body>
 </html>
 )rawliteral";
-    return html;
+  return html;
+}
+
+String stateJson() {
+  String json = "{";
+  json += "\"wifiStatus\":\"" + wifiStatusText() + "\",";
+  json += "\"apIp\":\"" + apIpText() + "\",";
+  json += "\"staIp\":\"" + staIpText() + "\",";
+  json += "\"staSsid\":\"" + jsonEscape(g_staSsid) + "\",";
+
+  if (isnan(g_latestSensor.temperature)) {
+    json += "\"temperatureText\":\"--\",";
+  } else {
+    json += "\"temperatureText\":\"" + String(g_latestSensor.temperature, 1) + "\",";
   }
 
-  void ensureServerStarted() {
-    if (!g_serverStarted) {
-      g_server.begin();
-      g_serverStarted = true;
-      Serial.println("[Web] HTTP server started.");
+  if (isnan(g_latestSensor.humidity)) {
+    json += "\"humidityText\":\"--\",";
+  } else {
+    json += "\"humidityText\":\"" + String(g_latestSensor.humidity, 1) + "\",";
+  }
+
+  json += "\"tinyLabel\":\"" + tinymlLabel() + "\",";
+  json += "\"tinyProbability\":\"" + tinymlProbText() + "\",";
+  json += "\"userLightOn\":" + String(g_userLight.isOn ? "true" : "false") + ",";
+  json += "\"userLightBrightness\":" + String(g_userLight.brightnessPercent) + ",";
+  json += "\"tempHistory\":" + historyArrayJson(g_tempHistory) + ",";
+  json += "\"humHistory\":" + historyArrayJson(g_humHistory);
+  json += "}";
+  return json;
+}
+
+void handleRoot() {
+  if (g_isApMode) g_server.send(200, "text/html", apPage());
+  else g_server.send(200, "text/html", staPage());
+}
+
+void handleSettings() {
+  if (!g_isApMode) {
+    g_server.sendHeader("Location", "/", true);
+    g_server.send(302, "text/plain", "Redirect");
+    return;
+  }
+  g_server.send(200, "text/html", settingsPage());
+}
+
+void handleApiState() {
+  g_server.send(200, "application/json", stateJson());
+}
+
+void handleApiScan() {
+  g_server.send(200, "application/json", wifiScanJson());
+}
+
+void handleApiSaved() {
+  g_server.send(200, "application/json", savedWifiJson());
+}
+
+void handleConnect() {
+  String ssid = g_server.arg("ssid");
+  String password = g_server.arg("password");
+  ssid.trim();
+
+  if (ssid.isEmpty()) {
+    g_server.send(400, "text/plain", "SSID is required.");
+    return;
+  }
+
+  saveWifiRecent(ssid, password);
+  startStaConnect(ssid, password);
+  g_server.send(200, "text/html", connectPage(ssid));
+}
+
+void handleForget() {
+  clearSavedWifi();
+  g_server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleToggleLight() {
+  g_userLight.isOn = !g_userLight.isOn;
+  applyUserLight();
+  saveUserLightPrefs();
+
+  Serial.printf("[LED] Toggle: %s | brightness=%d%%\n",
+                g_userLight.isOn ? "ON" : "OFF",
+                g_userLight.brightnessPercent);
+
+  g_server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleBrightness() {
+  int value = g_server.arg("value").toInt();
+
+  if (value < 0) value = 0;
+  if (value > 100) value = 100;
+
+  g_userLight.brightnessPercent = static_cast<uint8_t>(value);
+  applyUserLight();
+  saveUserLightPrefs();
+
+  Serial.printf("[LED] Brightness set to %d%%\n", g_userLight.brightnessPercent);
+
+  g_server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void setupRoutes() {
+  g_server.on("/", HTTP_GET, handleRoot);
+  g_server.on("/settings", HTTP_GET, handleSettings);
+  g_server.on("/api/state", HTTP_GET, handleApiState);
+  g_server.on("/api/scan", HTTP_GET, handleApiScan);
+  g_server.on("/api/saved", HTTP_GET, handleApiSaved);
+  g_server.on("/connect", HTTP_POST, handleConnect);
+  g_server.on("/forget", HTTP_POST, handleForget);
+  g_server.on("/api/light/toggle", HTTP_POST, handleToggleLight);
+  g_server.on("/api/light/brightness", HTTP_POST, handleBrightness);
+}
+
+void processQueues() {
+  if (g_ctx == nullptr) return;
+
+  sensor_data_t incoming{};
+  if (g_ctx->webQueue != nullptr) {
+    while (xQueueReceive(g_ctx->webQueue, &incoming, 0) == pdTRUE) {
+      g_latestSensor = incoming;
+      if (!isnan(incoming.temperature) && !isnan(incoming.humidity)) {
+        pushHistory(incoming.temperature, incoming.humidity);
+      }
     }
   }
 
-  void startApMode() {
-    WiFi.disconnect(true, true);
-    delay(100);
+  if (g_ctx->tinyResultQueue != nullptr) {
+    tinyml_result_t tiny{};
+    if (xQueuePeek(g_ctx->tinyResultQueue, &tiny, 0) == pdTRUE) {
+      g_latestTiny = tiny;
+      g_hasTinyResult = true;
+    }
+  }
+}
 
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASSWORD);
+void processWifiState() {
+  wl_status_t currentStatus = WiFi.status();
+  if (currentStatus != g_lastWifiStatus) {
+    Serial.printf("[Web] WiFi status changed: %d -> %d | mode=%d\n",
+                  g_lastWifiStatus,
+                  currentStatus,
+                  WiFi.getMode());
+    g_lastWifiStatus = currentStatus;
+  }
 
-    g_isApMode = true;
+  if (g_isStaConnecting && WiFi.status() == WL_CONNECTED) {
     g_isStaConnecting = false;
-    g_lastConnectFailed = false;
-    g_staIp = "";
-
-    ensureServerStarted();
-
-    Serial.print("[Web] AP started. IP: ");
-    Serial.println(WiFi.softAPIP());
-  }
-
-  void startStaMode(const String &ssid, const String &password) {
-    if (ssid.isEmpty()) {
-      startApMode();
-      return;
-    }
-
-    WiFi.disconnect(false, true);
-    delay(100);
-
-    WiFi.mode(WIFI_AP_STA);
-    if (WiFi.softAPIP().toString() == "0.0.0.0") {
-      WiFi.softAP(AP_SSID, AP_PASSWORD);
-      delay(100);
-    }
-
-    if (password.isEmpty()) {
-      WiFi.begin(ssid.c_str());
-    } else {
-      WiFi.begin(ssid.c_str(), password.c_str());
-    }
-
-    g_staSsid = ssid;
-    g_staPassword = password;
-    g_staConnectStartMs = millis();
-    g_isStaConnecting = true;
     g_isApMode = false;
-    g_lastConnectFailed = false;
-    g_staIp = "";
+    g_staIp = WiFi.localIP().toString();
+    app_set_wifi_connected(g_ctx, true);
+    notifyInternetReady();
 
-    ensureServerStarted();
-
-    Serial.printf("[Web] STA connecting to SSID: %s\n", ssid.c_str());
+    Serial.printf("[Web] STA connected | SSID=%s | IP=%s | RSSI=%d\n",
+                  WiFi.SSID().c_str(),
+                  g_staIp.c_str(),
+                  WiFi.RSSI());
   }
 
-  void handleRoot() {
-    if (g_isApMode) {
-      g_server.send(200, "text/html", apPage());
-    } else {
-      g_server.send(200, "text/html", staPage());
+  if (!g_isApMode && !g_isStaConnecting && currentStatus != WL_CONNECTED) {
+    if (app_get_wifi_connected(g_ctx)) {
+      Serial.printf("[Web] STA lost connection | status=%d\n", currentStatus);
     }
+    app_set_wifi_connected(g_ctx, false);
   }
 
-  void handleSettings() {
-    g_server.send(200, "text/html", settingsPage());
-  }
-
-  void handleSensors() {
-    String tempText = isnan(g_latestSensor.temperature) ? "null" : String(g_latestSensor.temperature, 1);
-    String humText  = isnan(g_latestSensor.humidity) ? "null" : String(g_latestSensor.humidity, 1);
-
-    String json = "{";
-    json += "\"temp\":" + tempText + ",";
-    json += "\"hum\":" + humText + ",";
-    json += "\"mode\":\"" + wifiStatusText() + "\",";
-    json += "\"weather\":\"" + classifyWeatherText(g_latestSensor.temperature, g_latestSensor.humidity) + "\"";
-    json += "}";
-
-    g_server.send(200, "application/json", json);
-  }
-
-  void handleApiState() {
-    String json = "{";
-    json += "\"temp\":";
-    json += isnan(g_latestSensor.temperature) ? "null" : String(g_latestSensor.temperature, 1);
-    json += ",";
-    json += "\"hum\":";
-    json += isnan(g_latestSensor.humidity) ? "null" : String(g_latestSensor.humidity, 1);
-    json += ",";
-    json += "\"weather\":\"" + classifyWeatherText(g_latestSensor.temperature, g_latestSensor.humidity) + "\",";
-    json += "\"mode\":\"" + wifiStatusText() + "\",";
-    json += "\"staIp\":\"" + staIpText() + "\",";
-    json += "\"ssid\":\"" + jsonEscape(g_staSsid) + "\",";
-
-    json += "\"historyTemp\":[";
-    for (int i = 0; i < g_historyCount; ++i) {
-      int idx = (g_historyHead - g_historyCount + i + HISTORY_SIZE) % HISTORY_SIZE;
-      if (i > 0) json += ",";
-      json += isnan(g_tempHistory[idx]) ? "null" : String(g_tempHistory[idx], 1);
-    }
-    json += "],";
-
-    json += "\"historyHum\":[";
-    for (int i = 0; i < g_historyCount; ++i) {
-      int idx = (g_historyHead - g_historyCount + i + HISTORY_SIZE) % HISTORY_SIZE;
-      if (i > 0) json += ",";
-      json += isnan(g_humHistory[idx]) ? "null" : String(g_humHistory[idx], 1);
-    }
-    json += "]";
-
-    json += "}";
-
-    g_server.send(200, "application/json", json);
-  }
-
-  void handleScan() {
-    g_server.send(200, "application/json", wifiScanJson());
-  }
-
-  void handleSaved() {
-    g_server.send(200, "application/json", savedWifiJson());
-  }
-
-  void handleConnectPage() {
-    String ssid = g_server.arg("ssid");
-    String pass = g_server.arg("pass");
-
-    if (ssid.isEmpty()) {
-      g_server.send(400, "text/plain", "SSID must not be empty.");
-      return;
-    }
-
-    g_server.send(200, "text/html", connectPage(ssid, pass));
-  }
-
-  void handleConnectStart() {
-    String ssid = g_server.arg("ssid");
-    String pass = g_server.arg("pass");
-
-    if (ssid.isEmpty()) {
-      g_server.send(400, "text/plain", "SSID must not be empty.");
-      return;
-    }
-
-    saveWifiRecent(ssid, pass);
-    g_server.send(200, "text/plain", "Connection request received. The ESP32 is starting the Wi-Fi connection process...");
-
-    delay(200);
-    startStaMode(ssid, pass);
-  }
-
-  void handleConnectStatus() {
-    String json = "{";
-
-    if (g_isStaConnecting) {
-      json += "\"state\":\"connecting\"";
-    } else if (!g_staIp.isEmpty() && WiFi.status() == WL_CONNECTED) {
-      json += "\"state\":\"connected\",";
-      json += "\"staIp\":\"" + g_staIp + "\"";
-    } else if (g_lastConnectFailed) {
-      json += "\"state\":\"failed\"";
-    } else {
-      json += "\"state\":\"idle\"";
-    }
-
-    json += "}";
-    g_server.send(200, "application/json", json);
-  }
-
-  void handleForget() {
-    clearSavedWifi();
-    g_server.send(200, "text/plain", "All saved Wi-Fi credentials have been removed.");
-    delay(200);
+  if (g_isStaConnecting && (millis() - g_staConnectStartMs >= STA_CONNECT_TIMEOUT)) {
+    Serial.printf("[Web] STA connect timeout -> back to AP | last status=%d\n", WiFi.status());
     startApMode();
   }
+}
 
-  void setupRoutes() {
-    g_server.on("/", HTTP_GET, handleRoot);
-    g_server.on("/settings", HTTP_GET, handleSettings);
-    g_server.on("/sensors", HTTP_GET, handleSensors);
-    g_server.on("/api/state", HTTP_GET, handleApiState);
-    g_server.on("/scan", HTTP_GET, handleScan);
-    g_server.on("/saved", HTTP_GET, handleSaved);
-    g_server.on("/connect-page", HTTP_GET, handleConnectPage);
-    g_server.on("/connect-start", HTTP_GET, handleConnectStart);
-    g_server.on("/connect-status", HTTP_GET, handleConnectStatus);
-    g_server.on("/forget", HTTP_GET, handleForget);
+void processBootButton() {
+  static int lastReading = HIGH;
+  static int stableState = HIGH;
+  static unsigned long lastDebounceTime = 0;
+  const unsigned long debounceDelay = 50;
+
+  int reading = digitalRead(BOOT_PIN);
+
+  if (reading != lastReading) {
+    lastDebounceTime = millis();
   }
 
-  void updateLatestSensorFromQueue() {
-    if (g_ctx == nullptr || g_ctx->webQueue == nullptr) return;
-
-    sensor_data_t temp{};
-    while (xQueueReceive(g_ctx->webQueue, &temp, 0) == pdTRUE) {
-      g_latestSensor = temp;
-      if (!isnan(temp.temperature) && !isnan(temp.humidity)) {
-        pushHistory(temp.temperature, temp.humidity);
-      }
-    }
-  }
-
-  void handleBootButton() {
-    static bool lastBootState = HIGH;
-    bool current = digitalRead(BOOT_PIN);
-
-    if (lastBootState == HIGH && current == LOW) {
-      delay(30);
-      if (digitalRead(BOOT_PIN) == LOW) {
-        Serial.println("[Web] BOOT pressed. Switching to AP mode.");
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (reading != stableState) {
+      stableState = reading;
+      if (stableState == LOW) {
+        Serial.println("[Web] BOOT pressed -> AP mode");
         startApMode();
       }
     }
-    lastBootState = current;
   }
 
-  void processStaConnectionState() {
-    if (!g_isStaConnecting) return;
-
-    wl_status_t st = WiFi.status();
-    if (st == WL_CONNECTED) {
-      g_isStaConnecting = false;
-      g_isApMode = false;
-      g_lastConnectFailed = false;
-      g_staIp = WiFi.localIP().toString();
-
-      if (g_ctx != nullptr && g_ctx->internetSemaphore != nullptr) {
-        xSemaphoreGive(g_ctx->internetSemaphore);
-      }
-
-      Serial.print("[Web] STA connected. IP: ");
-      Serial.println(g_staIp);
-      return;
-    }
-
-    if (millis() - g_staConnectStartMs > STA_CONNECT_TIMEOUT) {
-      Serial.println("[Web] STA connect timeout. Back to AP mode.");
-      g_lastConnectFailed = true;
-      startApMode();
-    }
-  }
-
-  void maintainConnection() {
-    if (g_isApMode || g_isStaConnecting) return;
-
-    if (!g_staSsid.isEmpty() && WiFi.status() != WL_CONNECTED) {
-      Serial.println("[Web] Wi-Fi lost. Retry STA...");
-      startStaMode(g_staSsid, g_staPassword);
-    }
-  }
+  lastReading = reading;
 }
+
+} // namespace
 
 void main_server_task(void *pvParameters) {
   g_ctx = static_cast<app_context_t *>(pvParameters);
+  if (g_ctx == nullptr || g_ctx->webQueue == nullptr) {
+    vTaskDelete(nullptr);
+    return;
+  }
 
   pinMode(BOOT_PIN, INPUT_PULLUP);
 
+  initUserLight();
   setupRoutes();
 
-  String savedSsid, savedPass;
-  bool hasSavedWifi = loadMostRecentWifi(savedSsid, savedPass);
-
-  if (digitalRead(BOOT_PIN) == LOW) {
-    Serial.println("[Web] BOOT held at startup -> force AP mode.");
-    startApMode();
-  } else if (hasSavedWifi) {
-    Serial.println("[Web] Found saved Wi-Fi -> try STA first.");
-    startStaMode(savedSsid, savedPass);
+  String savedSsid, savedPassword;
+  if (loadMostRecentWifi(savedSsid, savedPassword)) {
+    startStaConnect(savedSsid, savedPassword);
   } else {
-    Serial.println("[Web] No saved Wi-Fi -> AP mode.");
     startApMode();
   }
 
   while (true) {
+    processQueues();
+    processWifiState();
+    processBootButton();
     g_server.handleClient();
-    updateLatestSensorFromQueue();
-    handleBootButton();
-    processStaConnectionState();
-    maintainConnection();
-
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }

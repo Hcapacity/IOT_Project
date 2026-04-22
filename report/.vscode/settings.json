@@ -1,0 +1,28 @@
+{
+    "latex-workshop.latex.recipes": [
+        {
+			"name": "latexmk (lualatex)",
+			"tools": [
+				"lualatexmk"
+			]
+		}
+    ],
+    "latex-workshop.latex.tools": [
+        {
+			"name": "lualatexmk",
+			"command": "latexmk",
+			"args": [
+				"-synctex=1",
+				"-interaction=nonstopmode",
+				"-file-line-error",
+				"-lualatex",
+				"-outdir=%OUTDIR%",
+				"%DOC%"
+			],
+			"env": {
+				"TEXMFVAR": "%DIR%/build/texmf-var"
+			}
+		}
+    ],
+	"latex-workshop.latex.outDir": "%DIR%/build",
+}

@@ -1,0 +1,41 @@
+\section*{Abstract}
+\addcontentsline{toc}{section}{Abstract}
+This report presents the design and implementation of a real-time Internet of
+Things system on the ESP32-S3 platform using FreeRTOS and PlatformIO. The
+system was developed from an RTOS-based starter project and extended into a
+multi-functional environmental monitoring node that combines local sensing,
+real-time visual feedback, a web-based user interface, on-device TinyML
+prediction, and CoreIOT cloud connectivity. The final implementation is not a
+single-purpose sensor demo; instead, it is a coordinated embedded system in
+which independent tasks exchange data through queues, semaphores, and mutexes.
+
+The implemented node periodically acquires temperature and humidity from a
+DHT20 sensor, drives a discrete LED according to temperature conditions,
+updates a NeoPixel according to humidity level, and renders context-aware
+information on a 16x2 I\textsuperscript{2}C LCD. In parallel, a web server
+supports both Access Point (AP) and Station (STA) operation. In AP mode, the
+board exposes a dashboard for live monitoring, Wi-Fi scanning, saved-profile
+management, and direct control of an external LED through on/off and
+brightness-adjustment actions. In STA mode, the node connects to the Internet
+and publishes telemetry to the CoreIOT platform using MQTT. The project also
+includes a TinyML task that performs batched inference on normalized
+temperature-humidity features and generates a weather-oriented rain/no-rain
+prediction.
+
+From a software-engineering perspective, the project emphasizes task
+separation, predictable timing, and reduced dependence on globally shared
+state. Sensor data are treated as streaming information and distributed through
+single-slot queues to the LCD, web, TinyML, and cloud modules. An application
+context structure stores shared synchronization objects and a compact
+shared-state block protected by a mutex. This approach keeps the overall
+architecture modular while preserving the current logic of the system.
+
+The report explains the assignment requirements, maps them to the implemented
+features, describes the task architecture and data flow, and analyzes the
+timing behavior of each subsystem. Based on the code structure and diagnostic
+logs, the implementation satisfies the assignment as a soft real-time IoT
+system. It achieves periodic sensing, event-driven user interaction, Wi-Fi
+mode switching, lightweight on-device inference, and successful preparation for
+cloud telemetry publishing in STA mode.
+
+\clearpage

@@ -1,0 +1,107 @@
+\section{Results and Discussion}
+
+\subsection{What Works Well}
+Several aspects of the system are already strong from both an embedded-systems
+and a software-engineering perspective.
+
+First, the task architecture is coherent. The project does not implement
+assignment features as unrelated code fragments; instead, all major functions
+fit into a single RTOS dataflow model. The sensor task is the primary producer,
+the UI tasks are consumers, the TinyML task is a transformer, and the CoreIOT
+task is the cloud sink. This architectural clarity is a major strength of the
+system.
+
+Second, the use of synchronization primitives is appropriate. Queues are used
+for data movement, mutexes are used for genuine shared-resource protection, and
+the binary semaphore is used for a one-time readiness signal. This is a better
+design than trying to replace all state with semaphores or relying on broad
+global-variable access.
+
+Third, the AP dashboard is practically useful. It is not limited to a single
+HTML page with one button. It offers Wi-Fi scanning, profile management, live
+telemetry, LED control, brightness control, and recent-history visualization.
+This gives the project a user-facing completeness that many small embedded
+projects do not reach.
+
+Fourth, the project demonstrates good feature integration. TinyML is not
+isolated from the rest of the system; it affects the LCD, the dashboard, and
+the cloud payload. Likewise, CoreIOT is not treated as a one-way uploader only;
+it also influences local behavior through RPC.
+
+\subsection{Tradeoffs in the Current Design}
+Although the implementation is successful overall, the design includes several
+explicit tradeoffs.
+
+\subsubsection*{AP usability versus STA cloud publishing.}
+The same board cannot simultaneously behave as a simple AP-only configuration
+node and as a pure Internet-connected cloud device without state transitions.
+The chosen design resolves this by prioritizing AP mode for local setup and STA
+mode for cloud publishing. This is practical, but it introduces mode-switching
+complexity and makes some functionality context-dependent.
+
+\subsubsection*{Fresh data versus full history.}
+The queues mostly use single-slot ``latest value'' semantics. This is the right
+decision for UI responsiveness and low memory consumption, but it means the
+system does not preserve a complete time series for every consumer. The web
+task therefore implements its own history buffer for visualization.
+
+\subsubsection*{Prediction stability versus latency.}
+The TinyML task batches ten sensor samples before inference. This reduces noise
+and gives the model smoother features, but it increases prediction latency to
+roughly 20 seconds. For a weather-oriented embedded node, this is acceptable,
+but for a faster reactive use case it would be too slow.
+
+\subsubsection*{Reduced global state versus local module state.}
+The project has reduced shared global variables significantly by introducing an
+application context and protected shared state. However, some file-local static
+variables still exist, especially inside the web module. This is not a design
+error; it is a tradeoff between strong encapsulation and total elimination of
+all persistent module state.
+
+\subsection{Current Weaknesses}
+Several limitations remain in the current system.
+
+\subsubsection*{Timing validation is mostly analytical.}
+The code is structured well for soft real-time execution, but hard timing
+evidence is limited. There are no per-task runtime statistics, no deadline miss
+counters, and no direct WCET measurements.
+
+\subsubsection*{Cloud connectivity still depends on external network conditions.}
+The CoreIOT task is correctly gated by STA readiness, but MQTT success still
+depends on Wi-Fi quality, broker availability, and network environment. This is
+expected in practice, but it prevents deterministic end-to-end guarantees.
+
+\subsubsection*{TinyML evaluation is deployment-focused.}
+The code clearly deploys and executes the model, but the repository itself does
+not yet contain a complete experimental section with confusion matrices, test
+sets, or repeated on-device accuracy runs. That evaluation should be added in
+the final report using training and test results from the model-development
+pipeline.
+
+\subsubsection*{Time synchronization is prepared but not fully integrated.}
+The time utility module exists, but active NTP synchronization is not visible in
+the main execution flow. As a result, some time-derived TinyML features may rely
+on fallback constants and some telemetry timestamps may fall back to RTOS tick
+time.
+
+\subsubsection*{The web chart is intentionally lightweight.}
+The dashboard chart fulfills the current monitoring requirement, but it is not
+yet a full monitoring frontend. It keeps only a short recent history and does
+not persist records across resets or support export.
+
+\subsection{Future Development Directions}
+The current system already satisfies the assignment, but several extensions are
+natural next steps:
+\begin{itemize}
+  \item add explicit runtime profiling for each task,
+  \item integrate NTP synchronization into the STA workflow,
+  \item increase the length and persistence of the web history buffer,
+  \item support offline buffering and delayed CoreIOT upload,
+  \item extend cloud RPC to control more local features,
+  \item add more sensors or actuators using the same queue-based architecture,
+  \item improve TinyML evaluation with clearer dataset and accuracy reporting.
+\end{itemize}
+
+In summary, the system is already well structured and functionally complete, but
+the strongest next improvements would focus on measurement rigor, connectivity
+robustness, and richer data analysis.

@@ -1,12 +1,80 @@
 #include "global.h"
 
-float glob_temperature = 0;
-float glob_humidity = 0;
+namespace {
 
-boolean isWifiConnected = false;
-SemaphoreHandle_t xBinarySemaphoreInternet = xSemaphoreCreateBinary();
+bool lockSharedState(app_context_t *ctx) {
+  if (ctx == nullptr || ctx->stateMutex == nullptr) {
+    return false;
+  }
+  return xSemaphoreTake(ctx->stateMutex, portMAX_DELAY) == pdTRUE;
+}
 
-volatile lcd_view_mode_t g_lcdViewMode = LCD_VIEW_SENSOR;
+void unlockSharedState(app_context_t *ctx) {
+  if (ctx != nullptr && ctx->stateMutex != nullptr) {
+    xSemaphoreGive(ctx->stateMutex);
+  }
+}
+
+} // namespace
+
+void init_app_shared_state(app_context_t *ctx) {
+  if (ctx == nullptr) {
+    return;
+  }
+
+  ctx->sharedState.latestTemperature = NAN;
+  ctx->sharedState.latestHumidity = NAN;
+  ctx->sharedState.wifiConnected = false;
+  ctx->sharedState.lcdContentMode = LCD_CONTENT_SENSOR;
+}
+
+void app_set_latest_sensor(app_context_t *ctx, float temperature, float humidity) {
+  if (!lockSharedState(ctx)) {
+    return;
+  }
+
+  ctx->sharedState.latestTemperature = temperature;
+  ctx->sharedState.latestHumidity = humidity;
+  unlockSharedState(ctx);
+}
+
+void app_set_wifi_connected(app_context_t *ctx, bool connected) {
+  if (!lockSharedState(ctx)) {
+    return;
+  }
+
+  ctx->sharedState.wifiConnected = connected;
+  unlockSharedState(ctx);
+}
+
+bool app_get_wifi_connected(app_context_t *ctx) {
+  if (!lockSharedState(ctx)) {
+    return false;
+  }
+
+  const bool connected = ctx->sharedState.wifiConnected;
+  unlockSharedState(ctx);
+  return connected;
+}
+
+void app_set_lcd_content_mode(app_context_t *ctx, lcd_content_mode_t mode) {
+  if (!lockSharedState(ctx)) {
+    return;
+  }
+
+  ctx->sharedState.lcdContentMode = mode;
+  unlockSharedState(ctx);
+}
+
+lcd_content_mode_t app_get_lcd_content_mode(app_context_t *ctx) {
+  if (!lockSharedState(ctx)) {
+    return LCD_CONTENT_SENSOR;
+  }
+
+  const lcd_content_mode_t mode = ctx->sharedState.lcdContentMode;
+  unlockSharedState(ctx);
+  return mode;
+}
 
 led_mode_t classify_temperature_mode(float temperature) {
   if (temperature < 10.0f) {

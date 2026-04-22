@@ -1,0 +1,311 @@
+\section{Implementation}
+
+\subsection{System Startup and Resource Allocation}
+The entry point of the application is intentionally lightweight. In
+\texttt{main.cpp}, the \texttt{setup()} function performs four steps:
+\begin{enumerate}
+  \item initialize the serial port and I\textsuperscript{2}C bus,
+  \item allocate the application context,
+  \item create queues, mutexes, and the Internet-ready semaphore, and
+  \item spawn all RTOS tasks.
+\end{enumerate}
+
+This startup strategy is important because it keeps initialization
+deterministic. The \texttt{loop()} function does not perform application logic;
+it simply yields with a long delay. In other words, after boot the entire
+system behavior is task-driven. This is a clear and appropriate RTOS pattern
+for the given assignment.
+
+The application context is initialized by \texttt{init\_app\_shared\_state()},
+which sets default values such as invalid sensor readings, disconnected Wi-Fi
+state, and the default LCD content mode. This avoids undefined startup
+behavior.
+
+\subsection{Shared State Helpers}
+The file \texttt{global.cpp} implements helper functions to read and update the
+compact shared state block. The core logic is simple but useful:
+\begin{itemize}
+  \item \texttt{lockSharedState()} and \texttt{unlockSharedState()} hide mutex
+  handling details,
+  \item \texttt{app\_set\_latest\_sensor()} updates the latest temperature and
+  humidity,
+  \item \texttt{app\_set\_wifi\_connected()} and
+  \texttt{app\_get\_wifi\_connected()} manage connectivity state, and
+  \item \texttt{app\_set\_lcd\_content\_mode()} and
+  \texttt{app\_get\_lcd\_content\_mode()} coordinate LCD display policy.
+\end{itemize}
+
+The value of this module is not its complexity but its role in improving code
+quality. It makes synchronization explicit and reduces the need for broad
+\texttt{extern} globals. This is a meaningful improvement over directly
+exposing mutable state to every file.
+
+\subsection{Sensor Task}
+The sensor task is the timing anchor of the whole application. It performs
+periodic DHT20 acquisition every 2 seconds using \texttt{vTaskDelayUntil()}.
+This API is a good design choice because it maintains a stable period relative
+to the previous wake time, instead of accumulating drift through repeated
+\texttt{delay()} calls.
+
+The execution flow is as follows:
+\begin{enumerate}
+  \item initialize the DHT20 once, under I\textsuperscript{2}C mutex
+  protection;
+  \item on each period, attempt to lock the I\textsuperscript{2}C bus for up to
+  300 ms;
+  \item read temperature and humidity;
+  \item if the data are valid, update the shared state and dispatch the sample
+  to all consumers;
+  \item if the data are invalid, propagate an invalid sample to the LCD and web
+  server for graceful failure handling.
+\end{enumerate}
+
+One of the most elegant aspects of this task is the fan-out pattern. A single
+physical read is turned into multiple queue writes:
+\texttt{lcdQueue}, \texttt{webQueue}, \texttt{coreQueue}, and
+\texttt{tinyMLQueue}. This means the sensor is sampled exactly once per period,
+while the rest of the system remains modular.
+
+\subsection{LED Manager Task}
+The discrete LED task is implemented as an event-driven state machine. It does
+not read sensors directly. Instead, it receives \texttt{led\_command\_t}
+messages through \texttt{ledQueue}. The LED task supports two categories of
+behavior:
+\begin{itemize}
+  \item continuous blinking according to the current temperature mode, and
+  \item short pulse sequences for exceptional events.
+\end{itemize}
+
+The temperature-to-blink mapping is implemented through
+\texttt{classify\_temperature\_mode()} and \texttt{led\_half\_period\_ticks()}:
+\begin{itemize}
+  \item cold: 5-second half-period,
+  \item normal: 1-second half-period,
+  \item hot: 100-ms half-period,
+  \item error: 120-ms half-period.
+\end{itemize}
+
+The task also supports quick pulse bursts:
+\begin{itemize}
+  \item Wi-Fi connected: 3 fast blinks,
+  \item error on: 6 fast blinks,
+  \item error clear: stop pulsing and return to off.
+\end{itemize}
+
+The strong point of this design is that the LED module is both periodic and
+reactive. It uses queue timeouts as implicit timing intervals, so it can either
+wait for a new command or toggle according to the current mode without another
+timer task.
+
+\subsection{NeoPixel Task}
+The NeoPixel task is simpler but still well designed. It blocks on
+\texttt{neoQueue} and updates the RGB LED whenever a new humidity command
+arrives. The function \texttt{humidity\_to\_color()} maps humidity into a
+continuous gradient:
+\begin{itemize}
+  \item \(0\%\) to \(50\%\): red to green,
+  \item \(51\%\) to \(100\%\): green to blue.
+\end{itemize}
+
+This is an improvement over a strict three-bin implementation because it
+provides richer visual information while still satisfying the assignment's
+three-level requirement. The task also supports a disable command that clears
+the LED immediately, which is useful for future extension or power-saving
+scenarios.
+
+\subsection{LCD Task}
+The LCD task owns the local user interface. It maintains the most recent sensor
+sample and the most recent TinyML result, then decides what to show based on
+system state. The logic has three levels:
+\begin{enumerate}
+  \item in AP mode, always show the sensor screen;
+  \item in STA mode with normal LCD content mode, show the sensor screen;
+  \item in STA mode with forecast LCD content mode, show the TinyML forecast.
+\end{enumerate}
+
+This conditional behavior is an excellent example of policy separation. The
+task itself decides \textit{how} to render each screen, while the rest of the
+system decides \textit{which content mode} is currently active.
+
+The LCD module also reacts to environmental context:
+\begin{itemize}
+  \item if the sensor data are invalid, it prints \texttt{Sensor Error};
+  \item if Wi-Fi is connected, it can display signal quality in percent and a
+  qualitative label such as \texttt{GOOD} or \texttt{WEAK};
+  \item if TinyML results exist, it shows forecast label and rain probability.
+\end{itemize}
+
+An important implementation detail is that LCD rendering is not performed at a
+fixed blind period. Instead, the task updates when a new sensor sample arrives,
+when TinyML changes, when RSSI changes meaningfully, or when AP/STA mode
+changes. This avoids unnecessary I\textsuperscript{2}C traffic and makes the
+display more event-aware.
+
+\subsection{Web Server Task}
+The web module is the largest subsystem in the repository. It combines
+\texttt{WebServer}, \texttt{Preferences}, local runtime state, and Wi-Fi mode
+management. Its implementation can be divided into five functional groups.
+
+\subsubsection*{1) AP/STA workflow.}
+The board starts either from the most recently saved Wi-Fi profile or directly
+in AP mode if no profile exists. The helper functions
+\texttt{startApMode()} and \texttt{startStaConnect()} reset Wi-Fi state,
+configure the correct mode, and update internal status flags. If STA connection
+fails after 10 seconds, the system automatically returns to AP mode. The BOOT
+button also forces AP mode manually.
+
+\subsubsection*{2) Persistent Wi-Fi profiles.}
+The project uses \texttt{Preferences} to store up to five Wi-Fi profiles. The
+most recently used profile is kept at index 0. The code supports:
+\begin{itemize}
+  \item reading saved profiles,
+  \item updating or inserting a profile,
+  \item removing all saved profiles.
+\end{itemize}
+This is a practical improvement because it lets the board remember STA
+credentials across restarts without hard-coding a single network.
+
+\subsubsection*{3) AP dashboard and settings pages.}
+The root page in AP mode displays:
+\begin{itemize}
+  \item temperature and humidity,
+  \item TinyML label and probability,
+  \item AP IP and Wi-Fi status,
+  \item target STA SSID and STA IP,
+  \item external LED control,
+  \item chart history, and
+  \item quick Wi-Fi scan results.
+\end{itemize}
+The settings page expands the Wi-Fi management workflow by providing scan,
+saved-profile, and connect forms. The STA page is intentionally simpler and
+acts mainly as a status page rather than a full dashboard.
+
+\subsubsection*{4) REST endpoints.}
+The task registers multiple routes:
+\begin{itemize}
+  \item \texttt{/} for the main page,
+  \item \texttt{/settings} for Wi-Fi configuration,
+  \item \texttt{/api/state} for live JSON state,
+  \item \texttt{/api/scan} for Wi-Fi scan results,
+  \item \texttt{/api/saved} for stored Wi-Fi profiles,
+  \item \texttt{/connect} for STA connection request,
+  \item \texttt{/forget} for profile reset,
+  \item \texttt{/api/light/toggle} for on/off control,
+  \item \texttt{/api/light/brightness} for PWM brightness control.
+\end{itemize}
+
+\subsubsection*{5) Client-side visualization.}
+The AP dashboard includes JavaScript that polls \texttt{/api/state} every 2
+seconds. It updates visible values and renders a chart on a
+\texttt{canvas}. A recent improvement in the code is the use of dual Y-axes for
+temperature and humidity, which avoids the misleading effect of drawing both
+series on a single implicit scale. The chart also displays axis labels and
+relative sample times.
+
+Two implementation highlights stand out in this module. First, the task uses a
+20 ms loop period, which is short enough for responsive HTTP handling without
+busy-waiting. Second, the cloud subsystem is not started blindly; instead, the
+web task signals \texttt{internetSemaphore} once STA connectivity is confirmed.
+
+\subsection{TinyML Task}
+The TinyML task is built around a TensorFlow Lite Micro interpreter and an
+8-feature input vector. The implementation sequence is:
+\begin{enumerate}
+  \item initialize model, resolver, tensor arena, input tensor, and output
+  tensor;
+  \item receive sensor samples from \texttt{tinyMLQueue};
+  \item accumulate ten samples per inference batch;
+  \item compute batch-average temperature and humidity;
+  \item compute deltas relative to the previous batch;
+  \item derive month/hour sine and cosine terms;
+  \item normalize all eight features using predefined means and scales;
+  \item quantize to the model's input tensor format;
+  \item invoke the interpreter and decode output probability.
+\end{enumerate}
+
+The resulting feature vector is:
+\[
+[T_{avg}, H_{avg}, \Delta T, \Delta H, \sin(m), \cos(m), \sin(h), \cos(h)].
+\]
+
+This is a thoughtful design. Instead of feeding only raw temperature and
+humidity, the model also receives trend information and cyclical time features.
+This makes the TinyML task much more meaningful in a real system context.
+
+The task pushes a \texttt{tinyml\_result\_t} structure into
+\texttt{tinyResultQueue}, making the result available to the LCD, web, and
+CoreIOT tasks. It also prints diagnostic logs containing average values,
+temperature/humidity deltas, rain probability, and the final class.
+
+One limitation is that the code currently depends on either valid system time or
+fallback month/hour constants. Since the repository contains time utilities but
+no active NTP synchronization call in the runtime path, the temporal features
+may use fallback values unless time is synchronized elsewhere.
+
+\subsection{CoreIOT Task}
+The CoreIOT task is responsible for MQTT connectivity and telemetry publishing.
+Its logic is intentionally staged:
+\begin{enumerate}
+  \item wait on \texttt{internetSemaphore},
+  \item configure the MQTT client,
+  \item connect to the CoreIOT broker,
+  \item subscribe to the RPC request topic,
+  \item periodically publish telemetry every 10 seconds.
+\end{enumerate}
+
+The telemetry payload includes:
+\begin{itemize}
+  \item temperature,
+  \item humidity,
+  \item timestamp (epoch if valid, otherwise tick-based fallback),
+  \item rain probability,
+  \item rain probability percentage,
+  \item categorical rain prediction,
+  \item short rain status string,
+  \item current LCD forecast mode,
+  \item Wi-Fi connection state.
+\end{itemize}
+
+This payload is a good design choice because it combines raw measurements with
+derived context. The cloud dashboard therefore has richer observability than a
+minimal two-field sensor upload.
+
+The CoreIOT task also supports remote control through RPC. It accepts several
+method aliases, parses flexible boolean-like parameters, and maps the result to
+LCD content mode. In practice, this means a cloud-side control widget can switch
+the local LCD between sensor display and TinyML forecast display during STA
+operation.
+
+\subsection{Time Utility Module}
+The file \texttt{app\_time\_utils.cpp} provides helper routines for:
+\begin{itemize}
+  \item validating epoch time,
+  \item converting epoch time into local date-time fields,
+  \item synchronizing with NTP, and
+  \item formatting time strings.
+\end{itemize}
+
+Although the current runtime path does not actively show a complete NTP setup
+sequence, this module is still important because both the TinyML and CoreIOT
+parts are time-aware. It creates a clean extension point for future work in
+which telemetry timestamps and time-derived inference features are backed by
+live synchronized clock values.
+
+\subsection{Implementation Qualities}
+Several implementation features are worth highlighting as strengths of the
+project:
+\begin{itemize}
+  \item The system uses \texttt{xQueueOverwrite()} effectively for latest-value
+  semantics.
+  \item The sensing period is stabilized through \texttt{vTaskDelayUntil()}.
+  \item Shared state is reduced and protected by a mutex.
+  \item The LCD behavior is policy-driven rather than hard-coded to one screen.
+  \item The web interface is not a static page; it actively supports monitoring,
+  configuration, and control.
+  \item The TinyML task is integrated into the same RTOS pipeline as the other
+  system functions.
+  \item The CoreIOT task supports both telemetry and remote RPC interaction.
+\end{itemize}
+
+Taken together, these implementation choices show that the system is not merely
+feature-complete for the assignment; it is architecturally coherent.

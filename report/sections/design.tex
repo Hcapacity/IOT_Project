@@ -1,0 +1,248 @@
+\section{Design}
+
+\subsection{Design Goals}
+The design of the system follows one central principle: each major responsibility
+should be owned by one RTOS task, and communication between tasks should happen
+through explicit synchronization primitives rather than implicit shared-state
+dependencies. This is especially important for this project because the system
+combines periodic sensing, asynchronous user interaction, local rendering,
+network-state transitions, TinyML inference, and MQTT communication. If these
+concerns were implemented in a single control loop, the result would be harder
+to reason about and harder to evaluate as an RTOS design.
+
+The architecture therefore aims to satisfy five goals:
+\begin{enumerate}
+  \item predictable periodic sensing;
+  \item clear separation between producers and consumers of data;
+  \item minimal blocking between unrelated modules;
+  \item controlled access to shared resources such as the I\textsuperscript{2}C
+  bus and shared state; and
+  \item graceful transition between AP mode, STA mode, local UI, and cloud
+  connectivity.
+\end{enumerate}
+
+\subsection{System Architecture Overview}
+At the highest level, the system can be viewed as a streaming pipeline centered
+around sensor acquisition. The \texttt{sensor\_task} periodically produces the
+latest environmental measurements and distributes them to the rest of the
+system. Several downstream tasks consume the same information for different
+purposes:
+\begin{itemize}
+  \item the LED task converts temperature into blink behavior,
+  \item the NeoPixel task converts humidity into color,
+  \item the LCD task renders local status,
+  \item the web task updates the browser-visible dashboard and history buffer,
+  \item the TinyML task performs prediction, and
+  \item the CoreIOT task publishes telemetry to the cloud.
+\end{itemize}
+
+The web task is also the owner of Wi-Fi mode management. It decides whether the
+board is running in AP mode or attempting STA connection, and it signals the
+CoreIOT task when Internet connectivity becomes available. The TinyML and
+CoreIOT tasks are therefore not directly responsible for network setup; they
+are consumers of network availability.
+
+\subsection{Hardware Mapping}
+Table~\ref{tab:hardware-mapping} summarizes the active hardware resources used
+by the project.
+
+\begin{table}[H]
+\centering
+\caption{Hardware mapping of the implemented system}
+\label{tab:hardware-mapping}
+\begin{tabular}{p{3.2cm}p{2.5cm}p{8.0cm}}
+\toprule
+\textbf{Component} & \textbf{Pin / Address} & \textbf{Purpose} \\
+\midrule
+ESP32-S3 board & -- & Main microcontroller, Wi-Fi connectivity, RTOS execution \\
+DHT20 sensor & I\textsuperscript{2}C bus & Temperature and humidity acquisition \\
+LCD 16x2 & I\textsuperscript{2}C address \texttt{0x21} & Local system display for sensor, Wi-Fi, and TinyML states \\
+I\textsuperscript{2}C SDA & GPIO11 & Shared bus data line \\
+I\textsuperscript{2}C SCL & GPIO12 & Shared bus clock line \\
+Discrete LED & GPIO48 & Temperature-dependent blink feedback \\
+NeoPixel & GPIO45 & Humidity-dependent color indication \\
+External LED & GPIO5 & User-controlled LED from the web interface, PWM brightness \\
+BOOT button & GPIO0 & Manual fallback from STA/AP flow back to AP mode \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The mapping shows that the architecture is constrained by both physical sharing
+and functional reuse. The DHT20 and LCD share the I\textsuperscript{2}C bus,
+which justifies the use of a mutex. The external LED is distinct from the
+temperature LED, which makes it possible to satisfy the web control task
+without interfering with the environmental blink behavior.
+
+\subsection{RTOS Task Architecture}
+The complete runtime is built from seven explicitly created tasks. Their
+responsibilities, priorities, and triggering models are shown in
+Table~\ref{tab:task-architecture}.
+
+\begin{table}[H]
+\centering
+\caption{FreeRTOS task architecture}
+\label{tab:task-architecture}
+\begin{tabular}{p{3cm}p{1cm}p{1.8cm}p{3.5cm}p{5.2cm}}
+\toprule
+\textbf{Task} & \textbf{Prio.} & \textbf{Stack} & \textbf{Activation model} & \textbf{Main responsibility} \\
+\midrule
+\texttt{sensor\_task} & 3 & 4096 & Periodic every 2 s & Read DHT20, validate values, dispatch samples to downstream consumers \\
+\texttt{lcd\_task} & 2 & 4096 & Event-driven, queue wait up to 250 ms & Render local LCD content depending on sensor, Wi-Fi, and TinyML state \\
+\texttt{main\_server\_task} & 4 & 8192 & Fast service loop every 20 ms & Run HTTP server, handle AP/STA state, Wi-Fi profiles, dashboard logic \\
+\texttt{led\_manager\_task} & 1 & 3072 & Event-driven plus timeout & Generate discrete LED blink patterns from temperature or event commands \\
+\texttt{neo\_pixel\_task} & 1 & 3072 & Event-driven, blocking queue receive & Map humidity to RGB color and update NeoPixel \\
+\texttt{tiny\_ml\_task} & 1 & 8192 & Event-driven by sensor queue & Accumulate samples, build features, invoke TFLM model, publish result \\
+\texttt{coreiot\_task} & 1 & 6144 & Event-driven after Internet semaphore + periodic publish & Connect MQTT client, serve RPC, publish telemetry every 10 s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This division is a good fit for the project requirements. The web task receives
+the highest priority because it is responsible for configuration and network
+mode transitions. The sensor task receives the next-highest priority because it
+defines the cadence of environmental sampling. Presentation and cloud tasks are
+lower priority because they consume already acquired data rather than producing
+the primary physical measurements.
+
+\subsection{Application Context and Shared State}
+The project uses an \texttt{app\_context\_t} structure as the central ownership
+object for all queues, mutexes, the Internet-ready semaphore, and a compact
+shared state block. This is an important architectural decision because it
+reduces the need for project-wide global variables. Instead of exposing
+individual globals for temperature, humidity, Wi-Fi connection state, or LCD
+content mode, the code stores them inside a shared state structure protected by
+\texttt{stateMutex}.
+
+The shared state currently contains:
+\begin{itemize}
+  \item latest temperature,
+  \item latest humidity,
+  \item a boolean Wi-Fi-connected flag, and
+  \item the current LCD content mode.
+\end{itemize}
+
+This does not remove every file-local static variable from the repository. The
+web server module, for example, still maintains private runtime variables for
+its internal HTML state, history buffer, and Wi-Fi workflow. However, it
+significantly reduces uncontrolled cross-module coupling and improves the
+clarity of synchronization.
+
+\subsection{Inter-Task Communication Model}
+The project uses three primary synchronization mechanisms.
+
+\subsubsection*{Queues.}
+Queues are used for directional data flow. The design intentionally favors
+single-slot queues for continuously refreshed information. This means the system
+does not attempt to preserve every historical sensor sample inside RTOS queues;
+instead, each consumer receives the most recent snapshot. This choice is
+appropriate for UI and cloud applications where stale data are less useful than
+fresh data.
+
+\subsubsection*{Mutexes.}
+Two mutexes are central to the design:
+\begin{itemize}
+  \item \texttt{i2cMutex} protects the shared I\textsuperscript{2}C bus between
+  DHT20 reads and LCD writes.
+  \item \texttt{stateMutex} protects access to the shared state block.
+\end{itemize}
+Without \texttt{i2cMutex}, concurrent sensor and LCD access could lead to
+corrupted transactions or inconsistent device behavior. Without
+\texttt{stateMutex}, Wi-Fi or LCD content state could be modified while another
+task reads it.
+
+\subsubsection*{Binary semaphore.}
+The \texttt{internetSemaphore} is used as a one-shot signal from the web task to
+the CoreIOT task. It encodes an event rather than a data value: ``STA
+connectivity is now ready for cloud communication.'' This is an elegant use of
+a binary semaphore because the CoreIOT task should not try to initialize MQTT
+before the device is in the correct network mode.
+
+\subsection{Queue Topology}
+The queue topology is intentionally asymmetric. The sensor task is the main
+producer and fans out data into multiple destinations. Table
+\ref{tab:queue-topology} shows the purpose of each queue.
+
+\begin{table}[H]
+\centering
+\caption{Queue topology and semantics}
+\label{tab:queue-topology}
+\begin{tabular}{p{3cm}p{2cm}p{4cm}p{6cm}}
+\toprule
+\textbf{Queue} & \textbf{Length} & \textbf{Producer} & \textbf{Consumer / Purpose} \\
+\midrule
+\texttt{ledQueue} & 8 & sensor task or system events & LED manager receives mode-change and pulse commands \\
+\texttt{neoQueue} & 1 & sensor task & NeoPixel receives latest humidity snapshot \\
+\texttt{lcdQueue} & 1 & sensor task & LCD receives latest environmental sample \\
+\texttt{webQueue} & 1 & sensor task & Web server receives latest sample and updates history buffer \\
+\texttt{coreQueue} & 1 & sensor task & CoreIOT receives latest sample for periodic telemetry \\
+\texttt{tinyMLQueue} & 1 & sensor task & TinyML receives latest sample stream for batching and inference \\
+\texttt{tinyResultQueue} & 1 & TinyML task & LCD, web, and CoreIOT consume the latest inference result \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The use of \texttt{xQueueOverwrite()} on most single-slot queues is particularly
+appropriate because the system is monitoring-oriented. The most recent
+temperature or humidity value is more important than the complete backlog of old
+samples.
+
+\subsection{State Flow Through the System}
+Figure generation is not embedded directly inside this report, but the
+architecture can be reproduced externally using the following Mermaid code.
+This code can be pasted into draw.io through
+\textit{Arrange $\rightarrow$ Insert $\rightarrow$ Advanced $\rightarrow$
+Mermaid}, or into any Mermaid-compatible viewer.
+
+\begin{verbatim}
+flowchart LR
+    DHT20[DHT20 Sensor] --> ST[Sensor Task]
+    ST -->|temperature| LQ[ledQueue]
+    ST -->|humidity| NQ[neoQueue]
+    ST -->|latest sample| LCDQ[lcdQueue]
+    ST -->|latest sample| WQ[webQueue]
+    ST -->|latest sample| CQ[coreQueue]
+    ST -->|latest sample| TQ[tinyMLQueue]
+
+    LQ --> LT[LED Manager Task]
+    NQ --> NT[NeoPixel Task]
+    LCDQ --> LCDT[LCD Task]
+    WQ --> WT[Web Server Task]
+    TQ --> TT[TinyML Task]
+    CQ --> CT[CoreIOT Task]
+
+    TT -->|tinyml_result| TRQ[tinyResultQueue]
+    TRQ --> LCDT
+    TRQ --> WT
+    TRQ --> CT
+
+    WT -->|internetSemaphore| CT
+    WT --> WIFI[AP/STA Wi-Fi Manager]
+    WT --> PREFS[Preferences Storage]
+    WT --> BROWSER[HTTP Dashboard]
+    CT --> CLOUD[CoreIOT MQTT]
+\end{verbatim}
+
+The diagram highlights the main design pattern of the system: one producer task
+feeds multiple consumer tasks, while secondary tasks such as TinyML and Wi-Fi
+management enrich the data path with derived information and network events.
+
+\subsection{Design Rationale}
+Several implementation choices deserve emphasis:
+\begin{itemize}
+  \item \textbf{Single responsibility per task.} Each task has one primary
+  concern, which keeps the code easier to analyze and debug.
+  \item \textbf{Latest-value semantics.} For monitoring and display tasks, the
+  newest sample is more important than preserving every historical sample in a
+  queue.
+  \item \textbf{Bounded synchronization.} Critical resources are protected with
+  explicit mutexes instead of ad-hoc timing assumptions.
+  \item \textbf{Event-based cloud startup.} The CoreIOT task only starts
+  MQTT-related work after the web task signals that STA connectivity is valid.
+  \item \textbf{Batch-based inference.} TinyML is intentionally slower than raw
+  sensing because it aggregates ten samples before making a prediction. This
+  lowers noise and creates a more stable high-level output.
+\end{itemize}
+
+Overall, the design is a balanced soft real-time architecture. It remains
+straightforward to implement and maintain while still providing a clear RTOS
+decomposition and enough modularity for future extension.

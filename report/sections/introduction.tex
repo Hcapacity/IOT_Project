@@ -1,0 +1,146 @@
+\section{Introduction}
+
+\subsection{Project Context}
+The objective of this project is to transform a baseline RTOS-based embedded
+application into a complete Internet of Things system on the ESP32-S3 platform.
+The target board provides sufficient GPIO, Wi-Fi connectivity, and compute
+resources to host multiple concurrent tasks under FreeRTOS while still keeping
+the implementation close to the constraints of an embedded device. The project
+is built with PlatformIO and the Arduino framework, but its internal
+organization follows a classical RTOS design with explicitly created tasks,
+queues, semaphores, and mutexes rather than a monolithic \texttt{loop()}
+application. This is important because the assignment is not only about adding
+features; it also requires students to demonstrate understanding of task
+coordination, modularity, and synchronization in an embedded real-time system
+\cite{freertos_kernel,platformio,esp32_arduino}.
+
+The final system can be understood as a smart environmental node. It reads
+temperature and humidity, presents the state locally through LEDs and an LCD,
+offers a browser-based configuration and monitoring interface, performs
+on-device TinyML inference, and publishes telemetry to a cloud platform.
+Compared to a simple sensor board, the project therefore integrates four
+different interaction layers:
+\begin{enumerate}
+  \item the physical sensing layer (DHT20, LCD, LEDs, NeoPixel),
+  \item the RTOS coordination layer (tasks, queues, semaphores, shared state),
+  \item the local network user-interface layer (AP/STA web server), and
+  \item the cloud-connected telemetry layer (CoreIOT via MQTT).
+\end{enumerate}
+
+\subsection{Assignment Tasks and Design Implications}
+The assignment defines six major tasks. Understanding the constraints of each
+task is essential because the final architecture must support all of them
+simultaneously instead of implementing them in isolation.
+
+\subsubsection*{Task 1: Single LED blink with temperature conditions.}
+The first requirement is to redefine the blink behavior of a single LED
+according to at least three temperature states. This requirement looks simple,
+but it introduces two important design issues. First, the LED task must not
+block sensor acquisition or networking. Second, LED mode changes should happen
+immediately when a new temperature value arrives. This naturally suggests a
+dedicated LED manager task that receives temperature-derived commands through a
+queue.
+
+\subsubsection*{Task 2: NeoPixel control based on humidity.}
+The second task requires humidity-dependent color feedback. In this project,
+the NeoPixel is not used as a static indicator but as a continuous color mapper
+from low to high humidity. This expands the assignment requirement into a more
+expressive visual representation. Because humidity values are produced by the
+sensor task and consumed asynchronously by the NeoPixel task, queue-based data
+delivery is again the most appropriate mechanism.
+
+\subsubsection*{Task 3: Temperature and humidity monitoring with LCD display.}
+The LCD requirement is more subtle than it first appears. The display must show
+environmental information, react to system state, and demonstrate RTOS
+synchronization. In the implemented system, the LCD is not limited to one
+screen. It supports sensor display, Wi-Fi status display, and TinyML forecast
+display. The task also forces correct handling of a shared I\textsuperscript{2}C
+bus, which is why the code uses a mutex to protect both the DHT20 and LCD
+access.
+
+\subsubsection*{Task 4: Web server in Access Point mode.}
+The web server task introduces a complete user-interface requirement on top of
+the embedded node. The board must expose a meaningful AP-mode interface and
+allow control of two actions. In this project, the AP dashboard not only shows
+live sensor data but also supports Wi-Fi scanning, Wi-Fi profile storage, AP to
+STA switching, external LED on/off control, and external LED brightness
+control. This task directly influences the architecture because the web task
+must remain responsive while other RTOS tasks continue to run periodically.
+
+\subsubsection*{Task 5: TinyML deployment and accuracy evaluation.}
+This task requires more than simply executing a model. The system must define a
+data pipeline, prepare model inputs, deploy inference on the ESP32-S3, and
+evaluate the result. In the current implementation, TinyML is integrated as a
+dedicated consumer task that accumulates a batch of sensor readings, derives
+eight normalized input features, invokes a TensorFlow Lite Micro model, and
+publishes the result to the rest of the system. This requirement has a strong
+architectural impact because inference is periodic, compute-intensive relative
+to the rest of the application, and semantically different from raw sensing.
+
+\subsubsection*{Task 6: Data publishing to CoreIOT cloud server.}
+Cloud integration introduces the requirement that the board must publish data in
+STA mode only, with the correct authentication token. In practice, this means
+the application needs a mechanism to detect when Wi-Fi has successfully moved
+from AP or disconnected state into valid STA connectivity. This project
+implements that transition with a binary semaphore that signals ``Internet
+ready'' from the web task to the CoreIOT task. The cloud task therefore does
+not need to continuously probe for connectivity from boot time.
+
+\subsection{From Requirements to System Construction}
+Taken together, the six assignment tasks strongly suggest a distributed task
+architecture rather than a sequential application. A single-threaded design
+would quickly become difficult to maintain, because sensor acquisition, LCD
+rendering, blink control, Wi-Fi handling, HTTP requests, TinyML inference, and
+MQTT publishing all have different execution patterns and timing expectations.
+
+For this reason, the implemented system is built around seven FreeRTOS tasks:
+\texttt{sensor\_task}, \texttt{led\_manager\_task},
+\texttt{neo\_pixel\_task}, \texttt{lcd\_task}, \texttt{main\_server\_task},
+\texttt{coreiot\_task}, and \texttt{tiny\_ml\_task}. The main function only
+allocates an application context, creates queues and synchronization primitives,
+and starts these tasks. Each task is intentionally narrow in responsibility:
+the sensor task owns periodic sensing, the LED and NeoPixel tasks own local
+actuation, the LCD task owns presentation, the web task owns UI and Wi-Fi mode
+management, the TinyML task owns prediction, and the CoreIOT task owns cloud
+communication.
+
+This decomposition also makes the system easier to explain and test. Each
+assignment task can be traced to one or more RTOS tasks and their data
+interfaces. For example, the sensor task produces the physical environment
+measurements, the LED and NeoPixel tasks consume them to fulfill Tasks 1 and 2,
+the LCD and web tasks consume them to fulfill Tasks 3 and 4, the TinyML task
+transforms them to fulfill Task 5, and the CoreIOT task publishes them to
+fulfill Task 6.
+
+\subsection{Project Objectives}
+Based on the assignment and the implemented architecture, the practical
+objectives of this project are the following:
+\begin{itemize}
+  \item to build a stable multi-task IoT application on ESP32-S3;
+  \item to demonstrate correct use of FreeRTOS queues, semaphores, and mutexes;
+  \item to implement meaningful local feedback for temperature and humidity;
+  \item to provide a usable AP-mode dashboard for monitoring and control;
+  \item to support STA-mode cloud publishing to CoreIOT;
+  \item to integrate TinyML inference into the live sensing pipeline; and
+  \item to keep the design modular enough for future extension.
+\end{itemize}
+
+\subsection{Contributions of the Implemented System}
+Compared with a minimal RTOS demonstration, the current system contributes the
+following integrated features:
+\begin{itemize}
+  \item periodic sensing every 2 seconds using a dedicated sensor task;
+  \item temperature-dependent LED blinking with multiple operating modes;
+  \item humidity-dependent NeoPixel color mapping;
+  \item a multi-mode LCD that adapts to AP, STA, and TinyML states;
+  \item a browser-accessible AP dashboard with charting and device control;
+  \item Wi-Fi scanning, profile storage, and automatic reconnection flow;
+  \item batched TinyML inference using an 8-feature input vector;
+  \item CoreIOT MQTT telemetry publishing every 10 seconds in STA mode; and
+  \item a shared application context that reduces the need for project-wide
+    global variables.
+\end{itemize}
+
+The remainder of this report explains how these features map to the assignment,
+how they are implemented in code, and how the behavior of each task can be
+analyzed from a system-design and RTOS perspective.

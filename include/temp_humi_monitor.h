@@ -2,6 +2,7 @@
 #define __TEMP_HUMI_MONITOR__
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include "LiquidCrystal_I2C.h"
 #include "DHT20.h"

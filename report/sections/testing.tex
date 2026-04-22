@@ -1,0 +1,189 @@
+\section{Testing}
+
+\subsection{Testing Methodology}
+The repository contains extensive diagnostic logging and clearly defined RTOS
+periods, but it does not contain a full benchmark harness, oscilloscope traces,
+or deadline-monitor instrumentation. Therefore, the validation in this report is
+based on two evidence sources:
+\begin{enumerate}
+  \item \textbf{code-driven timing analysis}, derived from task periods, queue
+  usage, and blocking behavior; and
+  \item \textbf{serial-log validation}, derived from the diagnostic messages
+  emitted by the firmware such as \texttt{[Sensor]}, \texttt{[LCD]},
+  \texttt{[Web]}, \texttt{[TinyML]}, and \texttt{[CoreIoT]}.
+\end{enumerate}
+
+This means the project can be evaluated confidently as a \emph{soft real-time}
+embedded system, but not yet as a formally verified hard real-time system.
+
+\subsection{Test Plan}
+The implemented test plan covers all assignment tasks and the interactions
+between them:
+\begin{itemize}
+  \item verify periodic sensor acquisition and DHT20 initialization;
+  \item verify temperature-to-LED blink mapping;
+  \item verify humidity-to-NeoPixel color behavior;
+  \item verify LCD rendering under normal, AP, STA, and TinyML states;
+  \item verify AP dashboard response and external LED control;
+  \item verify Wi-Fi scan, profile save, STA connect, timeout fallback, and
+  BOOT-button AP recovery;
+  \item verify TinyML batching and prediction publication;
+  \item verify CoreIOT connection, RPC subscription, and telemetry publishing.
+\end{itemize}
+
+\subsection{Representative Log Evidence}
+The following diagnostic messages are important for system-level testing:
+\begin{itemize}
+  \item \texttt{[Sensor] DHT20 initialized.}
+  \item \texttt{[Sensor] T=\ldots, H=\ldots}
+  \item \texttt{[LCD] LCD initialized.}
+  \item \texttt{[Web] AP mode started \ldots}
+  \item \texttt{[Web] STA connect start \ldots}
+  \item \texttt{[Web] STA connected \ldots}
+  \item \texttt{[Web] STA connect timeout -> back to AP}
+  \item TinyML logs containing averaged values and rain probability
+  \item \texttt{[CoreIoT] Attempting MQTT connection\ldots}
+  \item \texttt{[CoreIoT] Subscribe v1/devices/me/rpc/request/+ -> OK}
+  \item \texttt{[CoreIoT] Publish -> OK}
+\end{itemize}
+
+Even without an external benchmark framework, these logs give a clear
+observation path for validating control-flow transitions and subsystem
+activation.
+
+\subsection{Timing Analysis by Task}
+Table~\ref{tab:timing-analysis} summarizes the expected timing behavior of the
+main tasks based on the implemented code.
+
+\begin{table}[!htbp]
+\centering
+\caption{Timing-oriented analysis of the implemented tasks}
+\label{tab:timing-analysis}
+\begin{tabular}{p{3cm}p{3.2cm}p{7.8cm}}
+\toprule
+\textbf{Task} & \textbf{Expected timing} & \textbf{Observation and interpretation} \\
+\midrule
+Sensor task & 2 s fixed period & Uses \texttt{vTaskDelayUntil()}, which is the strongest timing primitive in the project. This should keep long-term drift low as long as execution time stays below the period. \\
+LED task & event-driven, mode-dependent half-period & Responds immediately to queue input because \texttt{xQueueReceive()} wakes as soon as a command arrives. Blink cadence depends on the current mode. \\
+NeoPixel task & event-driven & Updates on each humidity command. Worst-case refresh is bounded by the sensor period, because humidity changes originate from the sensor task. \\
+LCD task & event-driven, queue wait up to 250 ms & Typical update occurs soon after a new sample arrives. Additional updates occur on Wi-Fi RSSI or display-state changes. \\
+Web task & 20 ms service loop & Appropriate for responsive local HTTP handling. Human interaction latency should feel near-instant on a local AP. \\
+TinyML task & one inference per 10 samples & Since sensing is 2 s periodic, inference is generated approximately every 20 s. This is the main intentional latency in the system. \\
+CoreIOT task & 10 s publish period & Telemetry is sent every 10 s after Wi-Fi and MQTT readiness. Network latency is nondeterministic and outside RTOS control. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Evaluation of RTOS Timing Quality}
+From a real-time perspective, the strongest part of the implementation is the
+sensing pipeline. The sensor task is explicitly periodic, and all downstream
+tasks are primarily event-driven. This is a good architecture because the
+periodic source is stable while the rest of the system reacts to the arrival of
+new data.
+
+The following observations can be made:
+\begin{itemize}
+  \item The project does \emph{not} rely on a long blocking loop that mixes all
+  concerns together.
+  \item The sensor task has the clearest timing contract in the whole system.
+  \item The web task remains responsive because it executes at a short
+  20 ms period.
+  \item The cloud task is decoupled from sensing and therefore should not delay
+  the DHT20 pipeline.
+  \item The LCD and TinyML tasks trade immediacy for better stateful behavior.
+\end{itemize}
+
+However, it is also important to state what is \emph{not} yet proven:
+\begin{itemize}
+  \item Worst-case execution time (WCET) has not been measured for every task.
+  \item There is no deadline-monitor task or explicit miss counter.
+  \item Cloud and Wi-Fi latencies remain network-dependent.
+  \item TinyML inference time is not timestamped in the logs as a numeric
+  micro-benchmark.
+\end{itemize}
+
+Therefore, the system can be judged as meeting the assignment's practical RTOS
+expectation, but it should be classified as a soft real-time implementation
+rather than a formally validated hard real-time design.
+
+\subsection{Task-by-Task Functional Verification}
+\subsubsection*{Task 1: LED behavior.}
+The LED task meets the requirement of at least three temperature-dependent
+behaviors. The classification function distinguishes cold, normal, and hot
+regions, while the manager task converts each region into a visibly different
+blink rate. In addition, the module already includes event pulses, which
+improves debuggability and future extensibility.
+
+\subsubsection*{Task 2: NeoPixel behavior.}
+The NeoPixel task satisfies the humidity mapping requirement and goes beyond it
+by providing a continuous gradient rather than only three static colors. Because
+the task receives data through a queue, synchronization with the sensor task is
+clean and non-blocking.
+
+\subsubsection*{Task 3: LCD monitoring.}
+The LCD subsystem clearly satisfies the requirement of multiple display states.
+It supports sensor error feedback, AP/STA context awareness, and TinyML
+forecast display. The use of an I\textsuperscript{2}C mutex is technically
+important and directly aligned with the synchronization emphasis of the
+assignment.
+
+\subsubsection*{Task 4: Web server.}
+The web task strongly satisfies the assignment. It provides:
+\begin{itemize}
+  \item Wi-Fi scan,
+  \item Wi-Fi save and recall,
+  \item connect and fallback flow,
+  \item an external LED on/off button,
+  \item an external LED brightness slider,
+  \item live sensor data display, and
+  \item a recent-history chart.
+\end{itemize}
+The implementation therefore exceeds the minimum requirement of ``two buttons''
+by including a meaningful monitoring dashboard and configuration workflow.
+
+\subsubsection*{Task 5: TinyML.}
+The TinyML module fulfills the requirement of deploying a model on the device
+and exposing the result to the rest of the system. The current evaluation is
+primarily architectural and functional rather than dataset-statistical, because
+the repository focuses on deployment code. Still, the task is fully integrated
+and produces live inference output in the running firmware.
+
+\subsubsection*{Task 6: CoreIOT.}
+The CoreIOT task satisfies the central cloud requirement: publishing occurs in
+STA mode after Internet readiness is signaled. The task also subscribes to RPC
+messages, which is a strong implementation detail because it turns cloud
+communication into a bidirectional control channel.
+
+\subsection{End-to-End Responsiveness}
+Looking at the end-to-end flow, the expected delays are as follows:
+\begin{itemize}
+  \item \textbf{Sensor to LED/NeoPixel:} effectively one sensor period plus
+  immediate queue wake-up, so around the 2 s sensing cadence.
+  \item \textbf{Sensor to LCD:} typically within the same sampling cycle, plus
+  a small scheduling/rendering delay.
+  \item \textbf{Sensor to Web dashboard:} one sensor period plus the browser's
+  2 s polling interval.
+  \item \textbf{Sensor to TinyML result:} approximately 20 s because of
+  batching.
+  \item \textbf{Sensor to CoreIOT publish:} bounded by the 10 s publish period,
+  assuming Wi-Fi and MQTT are already connected.
+\end{itemize}
+
+These values are consistent with the intended operating scope of the system.
+The implementation is optimized for functional integration and predictable
+behavior rather than ultra-low-latency inference.
+
+\subsection{Current Limitations of the Test Evidence}
+The current code base supports convincing functional testing, but a more
+advanced evaluation could still improve the report:
+\begin{itemize}
+  \item add explicit timestamped logs for task start/end times,
+  \item measure TinyML inference duration directly,
+  \item collect repeated Wi-Fi reconnect statistics,
+  \item record actual CoreIOT publish success rates over long runs,
+  \item export charts and screenshots from the AP dashboard.
+\end{itemize}
+
+Even without these additions, the current implementation provides convincing
+evidence that all major assignment tasks have been achieved and that the RTOS
+design behaves consistently with its intended timing model.

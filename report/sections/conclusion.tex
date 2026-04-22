@@ -1,0 +1,62 @@
+\section{Conclusion and Future Work}
+
+\subsection{Conclusion}
+This project successfully transforms an RTOS starter code base into a complete
+ESP32-S3 IoT system that combines sensing, local feedback, web interaction,
+TinyML inference, and cloud telemetry. From the perspective of assignment
+coverage, all six required tasks are addressed in a coherent way rather than as
+independent features. Temperature is mapped to LED blink patterns, humidity is
+mapped to NeoPixel color, the LCD provides multiple display states, the AP web
+server supports both monitoring and control, the TinyML model runs on-device,
+and CoreIOT publishing is handled correctly in STA mode.
+
+From the perspective of system design, the most important achievement is the
+task-based architecture. The application is structured around clear RTOS
+responsibilities, explicit queue-based communication, and proper use of
+semaphores and mutexes. This makes the system easier to understand, extend, and
+test. The introduction of an application context and protected shared state also
+improves code quality by reducing uncontrolled global-variable usage.
+
+The project also provides meaningful engineering lessons. It shows how a single
+embedded node can support multiple layers of functionality at once: physical
+sensing, local actuation, browser-based configuration, machine-learning
+inference, and cloud communication. It also highlights the importance of making
+tradeoffs explicit. For example, the system favors batching for TinyML
+stability, latest-value queues for simplicity, and AP/STA mode switching for
+practical usability.
+
+\subsection{What Was Learned}
+Through the development of this system, the following technical lessons were
+especially important:
+\begin{itemize}
+  \item how to decompose a real embedded application into RTOS tasks with
+  different priorities and activation models;
+  \item how to use queues, semaphores, and mutexes for their proper purposes
+  rather than treating them as interchangeable mechanisms;
+  \item how to design a user-facing AP dashboard that remains connected to live
+  firmware state;
+  \item how to integrate TinyML into a streaming sensor pipeline on a resource-
+  constrained microcontroller;
+  \item how cloud connectivity changes the state machine of an embedded node,
+  especially when AP and STA modes must coexist.
+\end{itemize}
+
+\subsection{Future Work}
+Although the implemented system already meets the project goals, there are
+several clear paths for improvement:
+\begin{itemize}
+  \item improve long-term timing analysis with explicit task profiling and
+  deadline measurements;
+  \item integrate NTP synchronization directly into the STA connection path;
+  \item evaluate the TinyML model with a larger on-device test set and report
+  formal accuracy metrics;
+  \item extend CoreIOT interaction with additional RPC-controlled features;
+  \item store longer-term sensor history and expose it through the web
+  interface;
+  \item add recovery features such as offline telemetry buffering during
+  temporary Wi-Fi loss.
+\end{itemize}
+
+Overall, the implemented system shows that an ESP32-S3 platform can host a
+well-structured and feature-rich IoT application when its software is designed
+around explicit RTOS principles rather than ad-hoc control logic.
