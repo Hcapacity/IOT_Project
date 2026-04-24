@@ -1,12 +1,12 @@
 # Fdb version 4
-["biber build/main"] 1776997275.44693 "build/main.bcf" "build/main.bbl" "build/main" 1776997278.13233 0
-  "build/main.bcf" 1776997275 108540 4ff32b4badaa354204ec44b9255fa1c6 "lualatex"
+["biber build/main"] 1776997275.44693 "build/main.bcf" "build/main.bbl" "build/main" 1776997591.26496 0
+  "build/main.bcf" 1776997590 108540 4ff32b4badaa354204ec44b9255fa1c6 "lualatex"
   "references.bib" 1776901592 1620 d22c9d4e4a7af8b150edac0e00485c68 ""
   (generated)
   "build/main.bbl"
   "build/main.blg"
   (rewritten before read)
-["lualatex"] 1776997266.03877 "c:/Users/chith/Downloads/Study/HK252/IoT/BTL/IOT_Project/report/main.tex" "build/main.pdf" "main" 1776997278.13297 0
+["lualatex"] 1776997580.05474 "c:/Users/chith/Downloads/Study/HK252/IoT/BTL/IOT_Project/report/main.tex" "build/main.pdf" "main" 1776997591.26631 0
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/goudy-sans-pro-black.luc" 1776995969 102396 4f2d58725995ef1c695c2c339d544916 ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmmono12-regular.luc" 1754146223 81764 2aa80bc139eaaea8e960731f42512c3d ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmmono8-regular.luc" 1754146223 81432 eab478dbb39c0ca35d346985691ac313 ""
@@ -18,7 +18,6 @@
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmroman17-regular.luc" 1763989378 128913 ec03eb20b4b0c8b95bec7fbb676bad72 ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmroman6-regular.luc" 1763989377 128508 5bfdc3c14da48c4563de19293727d0a8 ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmroman7-regular.luc" 1763989378 128367 b7b68cc5b3807f13b8c1954ee9c3144f ""
-  "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmroman8-bold.luc" 1763989379 128290 fececcf05f64f6277533e77f50b839cd ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmroman8-regular.luc" 1763989377 128138 53df3260eb3073ec8b9ad8c13099cc57 ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lmromancaps10-regular.luc" 1764599813 120239 997f40c89c095e0fcb2999106a6d3fdb ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lsans.luc" 1776995969 26327 0d4230d805cd8c02d3b6ac8e280ada54 ""
@@ -26,18 +25,18 @@
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lsansdi.luc" 1776995970 27655 82c44ded4f4473715f5e0255562ab7b7 ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/fonts/otl/lsansi.luc" 1776995969 27617 18f1271eed69ac8d9c792453b2dc4d60 ""
   "C:/texlive/2025/texmf-var/luatex-cache/generic/names/luaotfload-names.luc.gz" 1754146216 323882 609d81add21cabc5c0397c01e37dcb57 ""
-  "build/main.aux" 1776997275 11147 39d0719c4407bab689a07c2a91dbc01a "lualatex"
+  "build/main.aux" 1776997590 11150 e14daa716410274efea38780629c9a0b "lualatex"
   "build/main.bbl" 1776997278 8898 15445bd1b2214dd1be576cfb87aa8881 "biber build/main"
-  "build/main.out" 1776997275 11225 ef62c1102660c80db5e0fc5c31ffc086 "lualatex"
-  "c:/Users/chith/Downloads/Study/HK252/IoT/BTL/IOT_Project/report/main.tex" 1776994558 844 9d87a727a809ee5cb391fc21811b1e0b ""
-  "c:/texlive/2025/texmf-dist/fonts/map/fontname/texfonts.map" 1754106845 3524 cb3e574dea2d1052e39280babc910dc8 ""
+  "build/main.out" 1776997590 11225 ef62c1102660c80db5e0fc5c31ffc086 "lualatex"
+  "build/main.run.xml" 1776997590 2340 6db8a715c2a4d89a32bb73ebd4fd78a0 "lualatex"
+  "build/main.toc" 1776997590 5379 021c36b5b636d2415623ec2cd17aa855 "lualatex"
+  "c:/Users/chith/Downloads/Study/HK252/IoT/BTL/IOT_Project/report/main.tex" 1776997567 865 4afc8094c56b58eb0f6dd547f78a7725 ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmmono12-regular.otf" 1754112591 63012 1fdab367e024aff50d5106788d146f84 ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmmono8-regular.otf" 1754112591 66268 16930241f9cd197293e24846cbca8778 ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmmonolt10-bold.otf" 1754112591 66332 57f887bab47f465bde5e494bf5572b94 ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmroman12-bold.otf" 1754112591 110496 3798ed6a50bb549a3371df87f46555f4 ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmroman12-italic.otf" 1754112591 117732 7e4856311649a06883bcaa8573ee9fbd ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmroman12-regular.otf" 1754112591 110400 fcd786b88ef2ed507d57d8a4a31065e3 ""
-  "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmroman8-bold.otf" 1754112591 112404 23855ae8c8058f83b46ab713e126036c ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmroman8-regular.otf" 1754112591 111948 007834bc78aaaf72e203a5b19ed3b49a ""
   "c:/texlive/2025/texmf-dist/fonts/opentype/public/lm/lmromancaps10-regular.otf" 1754112591 108740 23eb2cc190a2848c3b3be00e44d6e3ff ""
   "c:/texlive/2025/texmf-dist/fonts/tfm/public/amsfonts/cmextra/cmex7.tfm" 1754094458 1004 54797486969f23fa377b128694d548df ""
@@ -244,7 +243,6 @@
   "c:/texlive/2025/texmf-dist/tex/latex/kvsetkeys/kvsetkeys.sty" 1754111396 13815 760b0c02f691ea230f5359c4e1de23a7 ""
   "c:/texlive/2025/texmf-dist/tex/latex/l3backend/l3backend-luatex.def" 1754111431 30810 c3820e799a46792cc52bae3843015ecb ""
   "c:/texlive/2025/texmf-dist/tex/latex/l3backend/l3backend-luatex.lua" 1754111431 3839 82abc8b52ef12a350d5fb2dd08354895 ""
-  "c:/texlive/2025/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def" 1754111431 30351 a2b09edc6c93a742566b222c33d0278e ""
   "c:/texlive/2025/texmf-dist/tex/latex/l3kernel/expl3.lua" 1754111471 19472 a4448fa5c5c5ba3cdcfd63b5a3db77b5 ""
   "c:/texlive/2025/texmf-dist/tex/latex/l3kernel/expl3.sty" 1754111471 6558 93e4e44e8ec0dfe3e03bb4a2d96e5c11 ""
   "c:/texlive/2025/texmf-dist/tex/latex/l3packages/xparse/xparse.sty" 1754111491 9783 ab4bee47700c04aadedb8da27591b0ab ""
@@ -356,13 +354,13 @@
   "images/f1.png" 1776996671 154053 83b16c707d6b1bc88f6bc6d88e6250a2 ""
   "images/f2.png" 1776996831 232183 b0f18192e39f5e889b8af62b47d03854 ""
   "images/hcmut.png" 1776901592 100724 34813e7945d25073d2021fd11a318249 ""
-  "main.tex" 1776994558 844 9d87a727a809ee5cb391fc21811b1e0b ""
+  "main.tex" 1776997567 865 4afc8094c56b58eb0f6dd547f78a7725 ""
   "sections/abstract.tex" 1776901592 2572 3e0cec0fb736fbe76eaa354fdd75089e ""
-  "sections/conclusion.tex" 1776901592 3339 0d2b25af33cf0bdbbecadc043c627ef7 ""
+  "sections/conclusion.tex" 1776997423 3339 0d2b25af33cf0bdbbecadc043c627ef7 ""
   "sections/design.tex" 1776901592 12269 1c27d11f20e8b5d5feeacc748c5a5abb ""
   "sections/discussion.tex" 1776901592 5787 0764286f5b25d9f703165766f0d29cb8 ""
   "sections/implementation.tex" 1776997051 22126 5c33e6ec068411413bd26c909502e13b ""
-  "sections/introduction.tex" 1776997265 9176 9184ca0cec694ad4ba3a76f31e71ee4b ""
+  "sections/introduction.tex" 1776997576 9189 5965bcc03561280e59268da7a459bb07 ""
   "sections/requirements.tex" 1776901592 10613 cf51fba1365edcf5a3dc7a8cece52bf5 ""
   "sections/testing.tex" 1776901592 9782 7c6acbff16809af3311bb522ee62af9e ""
   (generated)
@@ -374,5 +372,3 @@
   "build/main.run.xml"
   "build/main.toc"
   (rewritten before read)
-  "build/main.aux"
-  "build/main.out"
