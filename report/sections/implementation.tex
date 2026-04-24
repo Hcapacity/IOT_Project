@@ -194,7 +194,22 @@ The task registers multiple routes:
   \item \texttt{/api/light/brightness} for PWM brightness control.
 \end{itemize}
 
-\subsubsection*{5) Client-side visualization.}
+\subsubsection*{5) STA Mode (Cloud Integration and Remote Configuration)}
+When the device successfully establishes a connection to a Wi-Fi network, the Web Server transitions to a specialized configuration portal. This interface is crucial for defining where and how the system's telemetry data is routed:
+\begin{itemize}
+    \item \textbf{Dynamic Broker Configuration:} The STA page provides a dedicated form for customizing the communication target. Users can input the \textbf{MQTT Broker Host (Server Name)}, \textbf{Username}, and \textbf{Password} directly through the browser. This allows the system to be pointed to the official CoreIOT platform, a private MQTT broker, or a custom **Local Server** without any code changes.
+    \item \textbf{Persistence and REST API:} Configuration changes are submitted via the \texttt{/api/coreiot/config} POST endpoint. The task processes these requests and uses the \texttt{Preferences} library to save the credentials into the \texttt{WIFI\_STORE\_NAMESPACE}, ensuring the settings persist even after a power cycle.
+    \item \textbf{CoreIOT Task Synchronization:} The \texttt{coreiot\_task} is designed to be reactive to these changes. When a new server host or set of credentials is saved, the web task updates the shared application context. The CoreIOT task, which is constantly monitoring the connection state, will automatically trigger a reconnection sequence to the newly specified server.
+    \item \textbf{Telemetry Routing Control:} The interface also includes a toggle to enable or disable publishing. This gives the user full control over data privacy, allowing them to stop cloud transmission or redirect the stream to a local endpoint for private data logging.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{images/f1.png} 
+    \caption{Webserver STA UI}
+\end{figure}
+
+\subsubsection*{6) Client-side visualization.}
 The AP dashboard includes JavaScript that polls \texttt{/api/state} every 2
 seconds. It updates visible values and renders a chart on a
 \texttt{canvas}. A recent improvement in the code is the use of dual Y-axes for
@@ -207,51 +222,64 @@ Two implementation highlights stand out in this module. First, the task uses a
 busy-waiting. Second, the cloud subsystem is not started blindly; instead, the
 web task signals \texttt{internetSemaphore} once STA connectivity is confirmed.
 
-\subsection{TinyML Task}
-The TinyML task is built around a TensorFlow Lite Micro interpreter and an
-8-feature input vector. The implementation sequence is:
+
+\subsection{TinyML Task: Edge-Based Rain Forecasting Pipeline}
+
+The TinyML task implements an on-device rain prediction system, shifting the analytical workload from the cloud directly to the edge. This approach minimizes latency, reduces network dependency, and demonstrates the viability of executing neural networks on resource-constrained microcontrollers. The development and deployment of this predictive model follow a comprehensive Machine Learning pipeline, spanning from offline dataset preparation to real-time RTOS integration.
+
+\subsubsection*{1) Dataset Overview and Preprocessing}
+The predictive model is built upon a historical meteorological dataset collected in Ho Chi Minh City, encompassing continuous weather observations from 2009 to 2020. The primary objective is to perform a binary classification, categorizing the upcoming weather state as either "RAIN" (Class 1) or "SUNNY/SAFE" (Class 0). 
+
+During the offline data preparation phase, the raw weather labels were grouped to form the binary target variable. Conditions containing keywords such as 'rain', 'thunder', 'drizzle', or 'storm' were mapped to Class 1, while all other conditions were mapped to Class 0. To ensure the neural network converges effectively during training, the input features were standardized using \texttt{StandardScaler}, giving the data a mean of zero and a variance of one.
+
+\subsubsection*{2) Feature Engineering and Extraction}
+The edge system relies on a single DHT20 sensor to capture ambient temperature and humidity. To maximize the predictive power of this single data source, the system does not feed raw, instantaneous readings directly into the model. Instead, it derives an 8-feature input vector designed to capture both environmental trends and cyclical temporal patterns:
 \begin{enumerate}
-  \item initialize model, resolver, tensor arena, input tensor, and output
-  tensor;
-  \item receive sensor samples from \texttt{tinyMLQueue};
-  \item accumulate ten samples per inference batch;
-  \item compute batch-average temperature and humidity;
-  \item compute deltas relative to the previous batch;
-  \item derive month/hour sine and cosine terms;
-  \item normalize all eight features using predefined means and scales;
-  \item quantize to the model's input tensor format;
-  \item invoke the interpreter and decode output probability.
+    \item \textbf{Batch Averages ($T_{avg}, H_{avg}$):} The mean temperature and humidity are calculated over a sliding window. Filtering out momentary sensor noise provides a stable baseline of the current microclimate.
+    \item \textbf{Temporal Deltas ($\Delta T, \Delta H$):} The difference between the current batch averages and the previous batch averages. This captures the dynamic rate of change (e.g., a sudden drop in temperature combined with rapidly rising humidity), which is a critical meteorological indicator for incoming rain.
+    \item \textbf{Cyclical Time Features ($\sin(m), \cos(m), \sin(h), \cos(h)$):} Time is inherently cyclical, but standard integer representations (e.g., hour 23 and hour 0) appear mathematically distant to a neural network. By transforming the current month and hour using sine and cosine functions, the model correctly interprets the continuous, circular nature of time, helping it recognize diurnal variations and seasonal monsoon patterns in Ho Chi Minh City.
 \end{enumerate}
 
-The resulting feature vector is:
-\[
-[T_{avg}, H_{avg}, \Delta T, \Delta H, \sin(m), \cos(m), \sin(h), \cos(h)].
-\]
+\subsubsection*{3) Model Architecture and Training}
+The core logic is driven by a sequential Artificial Neural Network (ANN) designed via TensorFlow/Keras. The architecture is intentionally lightweight to accommodate the ESP32-S3's memory constraints while remaining capable of capturing non-linear relationships within the 8 features. The network topology consists of:
+\begin{itemize}
+    \item An \textbf{Input Layer} accepting the 8 standardized features.
+    \item A \textbf{Hidden Dense Layer} with 12 neurons utilizing the ReLU (Rectified Linear Unit) activation function.
+    \item A \textbf{Second Hidden Dense Layer} with 8 neurons, also using ReLU activation.
+    \item An \textbf{Output Layer} with a single neuron applying a Sigmoid activation function, producing a final probability score between 0.0 and 1.0.
+\end{itemize}
 
-This is a thoughtful design. Instead of feeding only raw temperature and
-humidity, the model also receives trend information and cyclical time features.
-This makes the TinyML task much more meaningful in a real system context.
+During the offline training phase, the dataset was split into an 80\% training set and a 20\% testing set. The model was compiled using the Adam optimizer and a binary cross-entropy loss function. After training for 50 epochs with a batch size of 32, the baseline model achieved an impressive accuracy of \textbf{84.45\%} on the 32-bit floating-point (float32) test set.
 
-The task pushes a \texttt{tinyml\_result\_t} structure into
-\texttt{tinyResultQueue}, making the result available to the LCD, web, and
-CoreIOT tasks. It also prints diagnostic logs containing average values,
-temperature/humidity deltas, rain probability, and the final class.
+\subsubsection*{4) Full Integer Quantization for Edge Deployment}
+To deploy this trained model onto the ESP32-S3, it required an aggressive optimization process using the TensorFlow Lite Converter. Deploying a float32 model would consume excessive SRAM and execution time. Therefore, the model underwent \textbf{Full Integer Quantization (INT8)}.
 
-One limitation is that the code currently depends on either valid system time or
-fallback month/hour constants. Since the repository contains time utilities but
-no active NTP synchronization call in the runtime path, the temporal features
-may use fallback values unless time is synchronized elsewhere.
+A Representative Dataset generator (yielding 100 random training samples) was used to calibrate the dynamic range of the model's weights and activations. This calibration allowed the converter to safely map the 32-bit floats into 8-bit integers. The resulting optimized model (\texttt{.tflite}) was then converted into a C-byte array header file (\texttt{model\_data.h}) using the \texttt{xxd} utility. 
 
+Remarkably, after this strict quantization process, the model retained an accuracy of approximately \textbf{83\%}. This minor degradation (around 1.45\%) is a highly favorable trade-off, as the INT8 model drastically reduces the memory footprint and accelerates inference time on the microcontroller without utilizing floating-point hardware during the forward pass.
+
+\subsubsection*{5) C++ Implementation in the RTOS Environment}
+Within the firmware, the \texttt{tiny\_ml\_task} manages the real-time execution of this pipeline. It utilizes the \texttt{tflite::MicroInterpreter} and an \texttt{AllOpsResolver} initialized with a 16 KB tensor arena. The implementation strictly mirrors the offline training pipeline:
+\begin{itemize}
+    \item \textbf{Accumulation:} The task receives raw data from \texttt{tinyMLQueue} and accumulates 10 consecutive sensor samples (equivalent to a 20-second monitoring window) before triggering an inference cycle.
+    \item \textbf{Normalization:} The computed 8 features are standardized locally using pre-computed \texttt{means} and \texttt{scales} arrays extracted from the Python \texttt{StandardScaler}.
+    \item \textbf{Input Quantization:} The normalized float values are converted into the INT8 format required by the model using the input tensor's specific \texttt{scale} and \texttt{zero\_point} parameters.
+    \item \textbf{Inference and Output:} The \texttt{interpreter->Invoke()} function is called. The resulting INT8 output is de-quantized back into a float probability. If this probability exceeds the 0.5 threshold, the system categorizes the upcoming state as "RAIN".
+\end{itemize}
+
+Finally, this prediction, along with the calculated probability percentage and timestamps, is packaged into a \texttt{tinyml\_result\_t} structure and pushed to the \texttt{tinyResultQueue}. It is subsequently consumed by the LCD task for immediate local display and by the CoreIOT task for remote cloud telemetry.
 \subsection{CoreIOT Task}
 The CoreIOT task is responsible for MQTT connectivity and telemetry publishing.
-Its logic is intentionally staged:
+Its logic is intentionally staged and highly configurable:
 \begin{enumerate}
   \item wait on \texttt{internetSemaphore},
-  \item configure the MQTT client,
-  \item connect to the CoreIOT broker,
+  \item retrieve dynamic MQTT connection parameters (broker host/IP, username, password) configured via the web interface,
+  \item connect to the specified MQTT broker,
   \item subscribe to the RPC request topic,
   \item periodically publish telemetry every 10 seconds.
 \end{enumerate}
+
+A significant architectural extension in this module is its support for dynamic server integration. The MQTT broker host and credentials are not strictly hard-coded into the firmware. Instead, the task retrieves these settings from the persistent configuration managed by the Web Server task. This allows users to easily redirect the telemetry stream from the default CoreIOT cloud platform to a custom local MQTT broker by simply updating the host IP address via the STA web interface. This extensibility ensures the system can seamlessly adapt to private, local IoT deployments on the fly, entirely without the need to modify source code or recompile the firmware.
 
 The telemetry payload includes:
 \begin{itemize}
@@ -290,6 +318,13 @@ sequence, this module is still important because both the TinyML and CoreIOT
 parts are time-aware. It creates a clean extension point for future work in
 which telemetry timestamps and time-derived inference features are backed by
 live synchronized clock values.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{images/f2.png} 
+    \caption{coreIOT dashboard}
+\end{figure}
+
 
 \subsection{Implementation Qualities}
 Several implementation features are worth highlighting as strengths of the

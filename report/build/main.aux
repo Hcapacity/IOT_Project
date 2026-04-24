@@ -17,20 +17,21 @@
 \abx@aux@cite{0}{esp32_arduino}
 \abx@aux@segm{0}{0}{esp32_arduino}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Project Context}{1}{subsection.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Assignment Tasks and Design Implications}{1}{subsection.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}From Requirements to System Construction}{3}{subsection.1.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.4}Project Objectives}{3}{subsection.1.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.5}Contributions of the Implemented System}{4}{subsection.1.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2}Requirements}{4}{section.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Requirement Mapping Strategy}{4}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Source Code}{1}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Project Context}{1}{subsection.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}Assignment Tasks and Design Implications}{1}{subsection.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.4}From Requirements to System Construction}{3}{subsection.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.5}Project Objectives}{4}{subsection.1.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.6}Contributions of the Implemented System}{4}{subsection.1.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Requirements}{5}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Requirement Mapping Strategy}{5}{subsection.2.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Task 1 Requirements: Temperature-Dependent LED Behavior}{5}{subsection.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Task 2 Requirements: Humidity-Dependent NeoPixel Indication}{5}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Task 2 Requirements: Humidity-Dependent NeoPixel Indication}{6}{subsection.2.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Task 3 Requirements: LCD-Based Monitoring and RTOS Synchronization}{6}{subsection.2.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Task 4 Requirements: AP-Mode Web Server and User Interaction}{6}{subsection.2.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Task 4 Requirements: AP-Mode Web Server and User Interaction}{7}{subsection.2.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Task 5 Requirements: TinyML Deployment and Evaluation}{7}{subsection.2.6}\protected@file@percent }
 \abx@aux@cite{0}{tflm}
 \abx@aux@segm{0}{0}{tflm}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Task 5 Requirements: TinyML Deployment and Evaluation}{7}{subsection.2.6}\protected@file@percent }
 \abx@aux@cite{0}{coreiot_platform}
 \abx@aux@segm{0}{0}{coreiot_platform}
 \abx@aux@cite{0}{pubsubclient}
@@ -39,6 +40,8 @@
 \abx@aux@segm{0}{0}{arduinojson}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.7}Task 6 Requirements: CoreIOT Cloud Publishing}{8}{subsection.2.7}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.8}Cross-Cutting Functional Requirements}{8}{subsection.2.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.9}Non-Functional Requirements}{9}{subsection.2.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.10}Hardware and Software Environment}{9}{subsection.2.10}\protected@file@percent }
 \abx@aux@cite{0}{platformio}
 \abx@aux@segm{0}{0}{platformio}
 \abx@aux@cite{0}{freertos_kernel}
@@ -49,62 +52,63 @@
 \abx@aux@segm{0}{0}{arduinojson}
 \abx@aux@cite{0}{tflm}
 \abx@aux@segm{0}{0}{tflm}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.9}Non-Functional Requirements}{9}{subsection.2.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.10}Hardware and Software Environment}{9}{subsection.2.10}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {3}Design}{10}{section.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Design Goals}{10}{subsection.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}System Architecture Overview}{10}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}System Architecture Overview}{11}{subsection.3.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Hardware Mapping}{11}{subsection.3.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3.1}{\ignorespaces Hardware mapping of the implemented system}}{11}{table.caption.9}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3.1}{\ignorespaces Hardware mapping of the implemented system}}{12}{table.caption.9}\protected@file@percent }
 \providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{tab:hardware-mapping}{{3.1}{11}{Hardware mapping of the implemented system}{table.caption.9}{}}
+\newlabel{tab:hardware-mapping}{{3.1}{12}{Hardware mapping of the implemented system}{table.caption.9}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.4}RTOS Task Architecture}{12}{subsection.3.4}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3.2}{\ignorespaces FreeRTOS task architecture}}{12}{table.caption.10}\protected@file@percent }
-\newlabel{tab:task-architecture}{{3.2}{12}{FreeRTOS task architecture}{table.caption.10}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Application Context and Shared State}{13}{subsection.3.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}Inter-Task Communication Model}{13}{subsection.3.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.7}Queue Topology}{14}{subsection.3.7}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3.3}{\ignorespaces Queue topology and semantics}}{14}{table.caption.14}\protected@file@percent }
-\newlabel{tab:queue-topology}{{3.3}{14}{Queue topology and semantics}{table.caption.14}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.8}State Flow Through the System}{15}{subsection.3.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.9}Design Rationale}{16}{subsection.3.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}Implementation}{16}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}System Startup and Resource Allocation}{16}{subsection.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Shared State Helpers}{17}{subsection.4.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Sensor Task}{17}{subsection.4.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}LED Manager Task}{18}{subsection.4.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}NeoPixel Task}{19}{subsection.4.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}LCD Task}{19}{subsection.4.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.7}Web Server Task}{20}{subsection.4.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.8}TinyML Task}{22}{subsection.4.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.9}CoreIOT Task}{22}{subsection.4.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.10}Time Utility Module}{23}{subsection.4.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.11}Implementation Qualities}{24}{subsection.4.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Testing}{24}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Testing Methodology}{24}{subsection.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Test Plan}{25}{subsection.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Representative Log Evidence}{25}{subsection.5.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Timing Analysis by Task}{26}{subsection.5.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Evaluation of RTOS Timing Quality}{26}{subsection.5.5}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {5.1}{\ignorespaces Timing-oriented analysis of the implemented tasks}}{27}{table.caption.20}\protected@file@percent }
-\newlabel{tab:timing-analysis}{{5.1}{27}{Timing-oriented analysis of the implemented tasks}{table.caption.20}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Task-by-Task Functional Verification}{28}{subsection.5.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.7}End-to-End Responsiveness}{29}{subsection.5.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.8}Current Limitations of the Test Evidence}{30}{subsection.5.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Results and Discussion}{30}{section.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}What Works Well}{30}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Tradeoffs in the Current Design}{31}{subsection.6.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Current Weaknesses}{31}{subsection.6.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Future Development Directions}{32}{subsection.6.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion and Future Work}{33}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Conclusion}{33}{subsection.7.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}What Was Learned}{34}{subsection.7.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Future Work}{34}{subsection.7.3}\protected@file@percent }
-\newlabel{LastPage}{{7.3}{35}{Future Work}{page.35}{}}
-\gdef\lastpage@lastpage{35}
-\gdef\lastpage@lastpageHy{35}
+\@writefile{lot}{\contentsline {table}{\numberline {3.2}{\ignorespaces FreeRTOS task architecture}}{13}{table.caption.10}\protected@file@percent }
+\newlabel{tab:task-architecture}{{3.2}{13}{FreeRTOS task architecture}{table.caption.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Application Context and Shared State}{14}{subsection.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}Inter-Task Communication Model}{14}{subsection.3.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.7}Queue Topology}{15}{subsection.3.7}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3.3}{\ignorespaces Queue topology and semantics}}{15}{table.caption.14}\protected@file@percent }
+\newlabel{tab:queue-topology}{{3.3}{15}{Queue topology and semantics}{table.caption.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.8}State Flow Through the System}{16}{subsection.3.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.9}Design Rationale}{17}{subsection.3.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Implementation}{17}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}System Startup and Resource Allocation}{17}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Shared State Helpers}{18}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Sensor Task}{18}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}LED Manager Task}{19}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}NeoPixel Task}{20}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}LCD Task}{20}{subsection.4.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.7}Web Server Task}{21}{subsection.4.7}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4.1}{\ignorespaces Webserver STA UI}}{23}{figure.caption.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.8}TinyML Task: Edge-Based Rain Forecasting Pipeline}{24}{subsection.4.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.9}CoreIOT Task}{26}{subsection.4.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.10}Time Utility Module}{28}{subsection.4.10}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4.2}{\ignorespaces coreIOT dashboard}}{28}{figure.caption.27}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.11}Implementation Qualities}{28}{subsection.4.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Testing}{29}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Testing Methodology}{29}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Test Plan}{29}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Representative Log Evidence}{30}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Timing Analysis by Task}{30}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Evaluation of RTOS Timing Quality}{30}{subsection.5.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5.1}{\ignorespaces Timing-oriented analysis of the implemented tasks}}{31}{table.caption.28}\protected@file@percent }
+\newlabel{tab:timing-analysis}{{5.1}{31}{Timing-oriented analysis of the implemented tasks}{table.caption.28}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Task-by-Task Functional Verification}{32}{subsection.5.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.7}End-to-End Responsiveness}{34}{subsection.5.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.8}Current Limitations of the Test Evidence}{34}{subsection.5.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Results and Discussion}{35}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}What Works Well}{35}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Tradeoffs in the Current Design}{35}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Current Weaknesses}{36}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Future Development Directions}{37}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion and Future Work}{38}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Conclusion}{38}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}What Was Learned}{38}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Future Work}{39}{subsection.7.3}\protected@file@percent }
+\newlabel{LastPage}{{7.3}{40}{Future Work}{page.40}{}}
+\gdef\lastpage@lastpage{40}
+\gdef\lastpage@lastpageHy{40}
 \xdef \mintedoldcachechecksum{\detokenize{\minted@cachechecksum }}
-\abx@aux@read@bbl@mdfivesum{109414495A0851842FD97E9D6289E23F}
+\abx@aux@read@bbl@mdfivesum{nohash}
+\abx@aux@read@bblrerun
 \abx@aux@defaultrefcontext{0}{freertos_kernel}{none/global//global/global/global}
 \abx@aux@defaultrefcontext{0}{platformio}{none/global//global/global/global}
 \abx@aux@defaultrefcontext{0}{esp32_arduino}{none/global//global/global/global}
@@ -112,4 +116,4 @@
 \abx@aux@defaultrefcontext{0}{coreiot_platform}{none/global//global/global/global}
 \abx@aux@defaultrefcontext{0}{pubsubclient}{none/global//global/global/global}
 \abx@aux@defaultrefcontext{0}{arduinojson}{none/global//global/global/global}
-\gdef \@abspage@last{39}
+\gdef \@abspage@last{43}
