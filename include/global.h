@@ -80,6 +80,8 @@ typedef struct {
   float latestHumidity;
   bool wifiConnected;
   lcd_content_mode_t lcdContentMode;
+  bool coreiotMqttConnected;
+  uint16_t coreiotRetrySec;
 } app_shared_state_t;
 
 // ===== Application context =====
@@ -103,6 +105,10 @@ void app_set_wifi_connected(app_context_t *ctx, bool connected);
 bool app_get_wifi_connected(app_context_t *ctx);
 void app_set_lcd_content_mode(app_context_t *ctx, lcd_content_mode_t mode);
 lcd_content_mode_t app_get_lcd_content_mode(app_context_t *ctx);
+void app_set_coreiot_mqtt_connected(app_context_t *ctx, bool connected);
+bool app_get_coreiot_mqtt_connected(app_context_t *ctx);
+void app_set_coreiot_retry_sec(app_context_t *ctx, uint16_t retrySec);
+uint16_t app_get_coreiot_retry_sec(app_context_t *ctx);
 
 led_mode_t classify_temperature_mode(float temperature);
 const char *classify_environment_status(float temperature, float humidity);

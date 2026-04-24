@@ -1,5 +1,8 @@
 #include "mainserver.h"
 #include <math.h>
+#include <ArduinoJson.h>
+#include "app_time_utils.h"
+#include "coreiot.h"
 
 namespace {
 
@@ -20,12 +23,25 @@ wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
 String g_staSsid;
 String g_staPassword;
 String g_staIp;
+constexpr int32_t kNtpGmtOffsetSec = 7 * 3600;
+constexpr int32_t kNtpDaylightOffsetSec = 0;
+static const char *kNtpServer = "pool.ntp.org";
+bool g_ntpSynced = false;
+unsigned long g_lastNtpTryMs = 0;
+static const unsigned long kNtpRetryIntervalMs = 30000UL;
+static const char *kPrefCoreiotEnabled = "ciot_en";
+static const char *kPrefCoreiotHost = "ciot_host";
+static const char *kPrefCoreiotUser = "ciot_user";
+static const char *kPrefCoreiotPass = "ciot_pass";
 
 static const int HISTORY_SIZE = 20;
 float g_tempHistory[HISTORY_SIZE] = {0};
 float g_humHistory[HISTORY_SIZE] = {0};
 int g_historyCount = 0;
 int g_historyHead = 0;
+uint32_t g_historyVersion = 0;
+uint32_t g_cachedHistoryVersion = UINT32_MAX;
+String g_cachedHistoryJson;
 
 struct SavedWifi {
   String ssid;
@@ -96,6 +112,7 @@ void pushHistory(float t, float h) {
   g_humHistory[g_historyHead] = h;
   g_historyHead = (g_historyHead + 1) % HISTORY_SIZE;
   if (g_historyCount < HISTORY_SIZE) g_historyCount++;
+  g_historyVersion++;
 }
 
 String historyArrayJson(const float *arr) {
@@ -107,6 +124,22 @@ String historyArrayJson(const float *arr) {
   }
   json += "]";
   return json;
+}
+
+String historyJson() {
+  if (g_cachedHistoryVersion == g_historyVersion && !g_cachedHistoryJson.isEmpty()) {
+    return g_cachedHistoryJson;
+  }
+
+  String json = "{";
+  json += "\"historyVersion\":" + String(g_historyVersion) + ",";
+  json += "\"tempHistory\":" + historyArrayJson(g_tempHistory) + ",";
+  json += "\"humHistory\":" + historyArrayJson(g_humHistory);
+  json += "}";
+
+  g_cachedHistoryJson = json;
+  g_cachedHistoryVersion = g_historyVersion;
+  return g_cachedHistoryJson;
 }
 
 uint32_t percentToDuty(uint8_t percent) {
@@ -221,12 +254,53 @@ void saveWifiRecent(const String &ssid, const String &password) {
 
   g_prefs.begin(WIFI_STORE_NAMESPACE, false);
   for (int i = newCount; i < WIFI_MAX_SAVED; ++i) {
-    g_prefs.remove(("ssid" + String(i)).c_str());
-    g_prefs.remove(("pass" + String(i)).c_str());
+    const String ssidKey = "ssid" + String(i);
+    const String passKey = "pass" + String(i);
+    if (g_prefs.isKey(ssidKey.c_str())) {
+      g_prefs.remove(ssidKey.c_str());
+    }
+    if (g_prefs.isKey(passKey.c_str())) {
+      g_prefs.remove(passKey.c_str());
+    }
   }
   g_prefs.end();
 
   setSavedCount(newCount);
+}
+
+void loadCoreiotPrefsAndApply() {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, true);
+  const bool enabled = g_prefs.getBool(kPrefCoreiotEnabled, true);
+  String host = g_prefs.getString(kPrefCoreiotHost, "");
+  String username = g_prefs.getString(kPrefCoreiotUser, "");
+  String password = g_prefs.getString(kPrefCoreiotPass, "");
+  g_prefs.end();
+
+  coreiot_set_publish_enabled(enabled);
+
+  host.trim();
+  username.trim();
+
+  if (!host.isEmpty()) {
+    coreiot_set_broker_host(host.c_str());
+  }
+  if (!username.isEmpty()) {
+    coreiot_set_credentials(username.c_str(), password.c_str());
+  }
+}
+
+void saveCoreiotEnabledPref(bool enabled) {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  g_prefs.putBool(kPrefCoreiotEnabled, enabled);
+  g_prefs.end();
+}
+
+void saveCoreiotConnectionPrefs(const String &host, const String &username, const String &password) {
+  g_prefs.begin(WIFI_STORE_NAMESPACE, false);
+  g_prefs.putString(kPrefCoreiotHost, host);
+  g_prefs.putString(kPrefCoreiotUser, username);
+  g_prefs.putString(kPrefCoreiotPass, password);
+  g_prefs.end();
 }
 
 String savedWifiJson() {
@@ -295,6 +369,36 @@ void notifyInternetReady() {
 
   BaseType_t ok = xSemaphoreGive(g_ctx->internetSemaphore);
   Serial.printf("[Web] internetSemaphore -> %s\n", ok == pdTRUE ? "GIVE OK" : "GIVE FAIL");
+}
+
+void trySyncNtp(bool forceNow) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  const unsigned long nowMs = millis();
+  if (!forceNow && g_ntpSynced) return;
+  if (!forceNow && (nowMs - g_lastNtpTryMs < kNtpRetryIntervalMs)) return;
+
+  g_lastNtpTryMs = nowMs;
+
+  const uint32_t beforeEpoch = static_cast<uint32_t>(time(nullptr));
+  Serial.printf("[Time] NTP try | force=%d | epoch_before=%lu\n",
+                forceNow ? 1 : 0,
+                static_cast<unsigned long>(beforeEpoch));
+
+  const bool ok = appTimeSyncNtp(
+    kNtpServer,
+    kNtpGmtOffsetSec,
+    kNtpDaylightOffsetSec,
+    1704067200U,
+    15000U,
+    250U
+  );
+
+  g_ntpSynced = ok;
+  const uint32_t afterEpoch = static_cast<uint32_t>(time(nullptr));
+  Serial.printf("[Time] NTP sync -> %s | epoch_after=%lu\n",
+                ok ? "OK" : "FAIL",
+                static_cast<unsigned long>(afterEpoch));
 }
 
 void startApMode() {
@@ -462,6 +566,7 @@ a.link{color:#7dd3fc;text-decoration:none}
 
 <script>
 let sliderDirty = false;
+let lastHistoryVersion = -1;
 
 function updateSliderValue(val){
   document.getElementById('sliderValue').textContent = val;
@@ -656,7 +761,18 @@ async function loadState(){
     document.getElementById('sliderValue').textContent = s.userLightBrightness;
   }
 
-  drawChart(s.tempHistory, s.humHistory);
+  if (typeof s.historyVersion === 'number' && s.historyVersion !== lastHistoryVersion) {
+    await loadHistory();
+  }
+}
+
+async function loadHistory(){
+  const res = await fetch('/api/history');
+  const h = await res.json();
+  if (typeof h.historyVersion === 'number') {
+    lastHistoryVersion = h.historyVersion;
+  }
+  drawChart(h.tempHistory, h.humHistory);
 }
 
 async function toggleLight(){
@@ -693,7 +809,9 @@ async function loadScan(){
 }
 
 loadState();
-setInterval(loadState, 2000);
+loadHistory();
+setInterval(loadState, 1000);
+setInterval(loadHistory, 3000);
 </script>
 </body>
 </html>
@@ -708,29 +826,101 @@ String staPage() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESP32 STA Info</title>
+<title>ESP32 STA CoreIOT</title>
 <style>
-body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0}
-.wrap{max-width:800px;margin:auto;padding:24px}
-.card{background:#1e293b;border-radius:18px;padding:18px}
-.badge{display:inline-block;padding:8px 12px;border-radius:999px;background:#334155;margin:4px 6px 4px 0}
+body{margin:0;background:#0f172a;color:#e2e8f0;font-family:Arial,sans-serif}
+.wrap{max-width:560px;margin:auto;padding:16px}
+.card{background:#1e293b;border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid #334155}
+.row:last-child{border-bottom:none}
+.label{opacity:.8}
+.value{font-weight:700}
+.btn{background:#38bdf8;border:none;color:#062033;padding:10px 12px;border-radius:10px;font-weight:700;cursor:pointer;width:100%}
+input{width:100%;padding:10px;border-radius:10px;border:1px solid #475569;background:#0f172a;color:#fff;box-sizing:border-box}
+.toggle{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.small{font-size:12px;opacity:.8}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>ESP32 Station Mode</h1>
-    <div class="badge">Status: )rawliteral";
-  html += wifiStatusText();
-  html += R"rawliteral(</div>
-    <div class="badge">SSID: )rawliteral";
-  html += jsonEscape(g_staSsid);
-  html += R"rawliteral(</div>
-    <div class="badge">IP: )rawliteral";
-  html += staIpText();
-  html += R"rawliteral(</div>
+    <h2 style="margin:0 0 8px 0">STA Network</h2>
+    <div class="row"><span class="label">WiFi</span><span class="value" id="wifiStatus">-</span></div>
+    <div class="row"><span class="label">SSID</span><span class="value" id="staSsid">-</span></div>
+    <div class="row"><span class="label">IP</span><span class="value" id="staIp">-</span></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px 0">CoreIOT</h2>
+    <div class="row"><span class="label">MQTT</span><span class="value" id="coreiotStatus">-</span></div>
+    <div class="row"><span class="label">Retry</span><span class="value" id="coreiotRetrySec">0s</span></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 10px 0">CoreIOT Config</h2>
+    <div class="toggle">
+      <input type="checkbox" id="coreiotEnabled" style="width:auto">
+      <span>Enable publish to CoreIOT</span>
+    </div>
+    <div style="margin-bottom:10px">
+      <input id="coreiotHost" placeholder="MQTT broker host (e.g. app.coreiot.io or 192.168.1.10)">
+    </div>
+    <div style="margin-bottom:10px">
+      <input id="coreiotUsername" placeholder="MQTT username">
+    </div>
+    <div style="margin-bottom:10px">
+      <input id="coreiotPassword" placeholder="MQTT password">
+    </div>
+    <button class="btn" onclick="saveCoreiotConfig()">Save</button>
+    <div class="small" id="coreiotMsg" style="margin-top:8px"></div>
   </div>
 </div>
+
+<script>
+async function loadState(){
+  const res = await fetch('/api/state');
+  const s = await res.json();
+  document.getElementById('wifiStatus').textContent = s.wifiStatus || '-';
+  document.getElementById('staSsid').textContent = s.staSsid || '-';
+  document.getElementById('staIp').textContent = s.staIp || '-';
+  document.getElementById('coreiotStatus').textContent = s.coreiotMqtt ? 'CONNECTED' : 'DISCONNECTED';
+  document.getElementById('coreiotRetrySec').textContent = String(s.coreiotRetrySec || 0) + 's';
+}
+
+async function loadCoreiotConfig(){
+  const res = await fetch('/api/coreiot/config');
+  const cfg = await res.json();
+  document.getElementById('coreiotEnabled').checked = !!cfg.enabled;
+  document.getElementById('coreiotHost').value = cfg.host || '';
+  document.getElementById('coreiotUsername').value = cfg.username || '';
+  document.getElementById('coreiotPassword').value = cfg.password || '';
+}
+
+async function saveCoreiotConfig(){
+  const enabled = document.getElementById('coreiotEnabled').checked;
+  const host = document.getElementById('coreiotHost').value || '';
+  const username = document.getElementById('coreiotUsername').value || '';
+  const password = document.getElementById('coreiotPassword').value || '';
+  const body = 'enabled=' + encodeURIComponent(enabled ? '1' : '0') +
+               '&host=' + encodeURIComponent(host) +
+               '&username=' + encodeURIComponent(username) +
+               '&password=' + encodeURIComponent(password);
+
+  const res = await fetch('/api/coreiot/config', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body
+  });
+
+  const msg = document.getElementById('coreiotMsg');
+  msg.textContent = res.ok ? 'Saved' : 'Save failed';
+  await loadState();
+}
+
+loadState();
+loadCoreiotConfig();
+setInterval(loadState, 3000);
+</script>
 </body>
 </html>
 )rawliteral";
@@ -812,10 +1002,9 @@ async function loadScan(){
     return;
   }
   arr.forEach(w=>{
-    const div = document.createElement('div');
-    div.className = 'item';
-    div.innerHTML = `<b>${w.ssid || '(hidden)'}</b> | ${w.quality}% | ${w.enc}
-                     <div style="margin-top:8px"><button class="btn secondary" onclick="fillWifi('${(w.ssid || '').replace(/'/g,"\\'")}', '')">Use</button></div>`;
+    const div=document.createElement('div');
+    div.className='item';
+    div.textContent = `${w.ssid || '(hidden)'} | ${w.quality}% | ${w.enc}`;
     box.appendChild(div);
   });
 }
@@ -883,32 +1072,29 @@ body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0}
 }
 
 String stateJson() {
-  String json = "{";
-  json += "\"wifiStatus\":\"" + wifiStatusText() + "\",";
-  json += "\"apIp\":\"" + apIpText() + "\",";
-  json += "\"staIp\":\"" + staIpText() + "\",";
-  json += "\"staSsid\":\"" + jsonEscape(g_staSsid) + "\",";
+  StaticJsonDocument<384> doc;
+  doc["wifiStatus"] = wifiStatusText();
+  doc["apIp"] = apIpText();
+  doc["staIp"] = staIpText();
+  doc["staSsid"] = g_staSsid;
+  doc["temperatureText"] = isnan(g_latestSensor.temperature) ? "--" : String(g_latestSensor.temperature, 1);
+  doc["humidityText"] = isnan(g_latestSensor.humidity) ? "--" : String(g_latestSensor.humidity, 1);
+  doc["tinyLabel"] = tinymlLabel();
+  doc["tinyProbability"] = tinymlProbText();
+  doc["userLightOn"] = g_userLight.isOn;
+  doc["userLightBrightness"] = g_userLight.brightnessPercent;
+  doc["coreiotMqtt"] = app_get_coreiot_mqtt_connected(g_ctx);
+  doc["coreiotRetrySec"] = app_get_coreiot_retry_sec(g_ctx);
+  doc["historyVersion"] = g_historyVersion;
 
-  if (isnan(g_latestSensor.temperature)) {
-    json += "\"temperatureText\":\"--\",";
-  } else {
-    json += "\"temperatureText\":\"" + String(g_latestSensor.temperature, 1) + "\",";
-  }
-
-  if (isnan(g_latestSensor.humidity)) {
-    json += "\"humidityText\":\"--\",";
-  } else {
-    json += "\"humidityText\":\"" + String(g_latestSensor.humidity, 1) + "\",";
-  }
-
-  json += "\"tinyLabel\":\"" + tinymlLabel() + "\",";
-  json += "\"tinyProbability\":\"" + tinymlProbText() + "\",";
-  json += "\"userLightOn\":" + String(g_userLight.isOn ? "true" : "false") + ",";
-  json += "\"userLightBrightness\":" + String(g_userLight.brightnessPercent) + ",";
-  json += "\"tempHistory\":" + historyArrayJson(g_tempHistory) + ",";
-  json += "\"humHistory\":" + historyArrayJson(g_humHistory);
-  json += "}";
+  String json;
+  json.reserve(320);
+  serializeJson(doc, json);
   return json;
+}
+
+void handleApiHistory() {
+  g_server.send(200, "application/json", historyJson());
 }
 
 void handleRoot() {
@@ -935,6 +1121,68 @@ void handleApiScan() {
 
 void handleApiSaved() {
   g_server.send(200, "application/json", savedWifiJson());
+}
+
+void handleApiCoreiotConfigGet() {
+  char host[64] = {0};
+  char username[80] = {0};
+  char password[80] = {0};
+  coreiot_get_broker_host(host, sizeof(host));
+  coreiot_get_credentials(username, sizeof(username), password, sizeof(password));
+
+  StaticJsonDocument<320> doc;
+  doc["enabled"] = coreiot_get_publish_enabled();
+  doc["host"] = host;
+  doc["username"] = username;
+  doc["password"] = password;
+
+  String payload;
+  serializeJson(doc, payload);
+  g_server.send(200, "application/json", payload);
+}
+
+void handleApiCoreiotConfigPost() {
+  bool enabled = coreiot_get_publish_enabled();
+  if (g_server.hasArg("enabled")) {
+    String en = g_server.arg("enabled");
+    en.trim();
+    en.toLowerCase();
+    enabled = (en == "1" || en == "true" || en == "on" || en == "yes");
+  }
+
+  String host;
+  String username;
+  String password;
+
+  if (g_server.hasArg("host")) {
+    host = g_server.arg("host");
+    host.trim();
+  }
+  if (g_server.hasArg("username")) {
+    username = g_server.arg("username");
+    username.trim();
+  }
+  if (g_server.hasArg("password")) {
+    password = g_server.arg("password");
+  }
+
+  if (!host.isEmpty() && !coreiot_set_broker_host(host.c_str())) {
+    g_server.send(400, "application/json", "{\"ok\":false,\"reason\":\"invalid_host\"}");
+    return;
+  }
+
+  if (!username.isEmpty()) {
+    if (!coreiot_set_credentials(username.c_str(), password.c_str())) {
+      g_server.send(400, "application/json", "{\"ok\":false,\"reason\":\"invalid_credentials\"}");
+      return;
+    }
+  }
+
+  coreiot_set_publish_enabled(enabled);
+  saveCoreiotConnectionPrefs(host, username, password);
+  saveCoreiotEnabledPref(enabled);
+
+  g_server.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleConnect() {
@@ -988,12 +1236,22 @@ void setupRoutes() {
   g_server.on("/", HTTP_GET, handleRoot);
   g_server.on("/settings", HTTP_GET, handleSettings);
   g_server.on("/api/state", HTTP_GET, handleApiState);
+  g_server.on("/api/history", HTTP_GET, handleApiHistory);
+  g_server.on("/api/coreiot/config", HTTP_GET, handleApiCoreiotConfigGet);
+  g_server.on("/api/coreiot/config", HTTP_POST, handleApiCoreiotConfigPost);
   g_server.on("/api/scan", HTTP_GET, handleApiScan);
   g_server.on("/api/saved", HTTP_GET, handleApiSaved);
   g_server.on("/connect", HTTP_POST, handleConnect);
   g_server.on("/forget", HTTP_POST, handleForget);
   g_server.on("/api/light/toggle", HTTP_POST, handleToggleLight);
   g_server.on("/api/light/brightness", HTTP_POST, handleBrightness);
+  g_server.onNotFound([]() {
+    if (g_server.uri() == "/favicon.ico") {
+      g_server.send(204, "text/plain", "");
+      return;
+    }
+    g_server.send(404, "application/json", "{\"ok\":false,\"reason\":\"not_found\"}");
+  });
 }
 
 void processQueues() {
@@ -1039,18 +1297,23 @@ void processWifiState() {
                   WiFi.SSID().c_str(),
                   g_staIp.c_str(),
                   WiFi.RSSI());
+    Serial.printf("[Web] Open STA page at: http://%s/\n", g_staIp.c_str());
+
+    trySyncNtp(true);
   }
 
   if (!g_isApMode && !g_isStaConnecting && currentStatus != WL_CONNECTED) {
-    if (app_get_wifi_connected(g_ctx)) {
-      Serial.printf("[Web] STA lost connection | status=%d\n", currentStatus);
-    }
     app_set_wifi_connected(g_ctx, false);
+    g_ntpSynced = false;
   }
 
   if (g_isStaConnecting && (millis() - g_staConnectStartMs >= STA_CONNECT_TIMEOUT)) {
     Serial.printf("[Web] STA connect timeout -> back to AP | last status=%d\n", WiFi.status());
     startApMode();
+  }
+
+  if (!g_isApMode && !g_isStaConnecting && currentStatus == WL_CONNECTED) {
+    trySyncNtp(false);
   }
 }
 
@@ -1091,6 +1354,7 @@ void main_server_task(void *pvParameters) {
   pinMode(BOOT_PIN, INPUT_PULLUP);
 
   initUserLight();
+  loadCoreiotPrefsAndApply();
   setupRoutes();
 
   String savedSsid, savedPassword;

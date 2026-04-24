@@ -6,11 +6,12 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <math.h>
+#include <string.h>
 
 // ----------- CONFIGURE THESE! -----------
-static const char *coreIOT_Server = "app.coreiot.io";
-// static const char *coreIOT_Token  = "h61qp4bfrpbsp7iy5x2c";   // Device Access Token
-static const char *coreIOT_Token = "rxtf4xf38ng1ag4htz0l";  // Backup Device Access Token
+static const char *kDefaultBrokerHost = "app.coreiot.io";
+static const char *kDefaultMqttUsername = "h61qp4bfrpbsp7iy5x2c";
+static const char *kDefaultMqttPassword = "";
 static const int mqttPort = 1883;
 
 constexpr int32_t kGmtOffsetSec   = 7 * 3600;
@@ -34,6 +35,10 @@ app_context_t *g_ctx = nullptr;
 
 // trạng thái remote control cho LCD từ CoreIOT
 bool g_remoteLcdForecastEnabled = false;
+bool g_coreiotPublishEnabled = true;
+char g_mqttHost[64] = {0};
+char g_mqttUsername[80] = {0};
+char g_mqttPassword[80] = {0};
 
 // ----------------------------------------------------
 // Utility
@@ -187,22 +192,68 @@ static void applyRemoteLcdForecastMode(bool enabled) {
 // MQTT connect / callback
 // ----------------------------------------------------
 static void reconnect() {
-  while (!client.connected()) {
-    Serial.print("[CoreIoT] Attempting MQTT connection... ");
+  static uint32_t retryMs = 3000;
+  static uint32_t nextAttemptMs = 0;
+  constexpr uint32_t kRetryBaseMs = 3000;
+  constexpr uint32_t kRetryMaxMs = 30000;
 
-    // username = token, password = empty
-    if (client.connect("ESP32Client", coreIOT_Token, nullptr)) {
-      Serial.println("connected");
-      bool subOk = client.subscribe(kRpcTopicSub);
-      Serial.print("[CoreIoT] Subscribe ");
-      Serial.print(kRpcTopicSub);
-      Serial.print(" -> ");
-      Serial.println(subOk ? "OK" : "FAIL");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(", retry in 5s");
-      vTaskDelay(pdMS_TO_TICKS(5000));
+  if (client.connected()) {
+    app_set_coreiot_mqtt_connected(g_ctx, true);
+    app_set_coreiot_retry_sec(g_ctx, 0);
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    retryMs = kRetryBaseMs;
+    nextAttemptMs = 0;
+    app_set_coreiot_mqtt_connected(g_ctx, false);
+    app_set_coreiot_retry_sec(g_ctx, 0);
+    return;
+  }
+
+  if (!g_coreiotPublishEnabled) {
+    app_set_coreiot_mqtt_connected(g_ctx, false);
+    app_set_coreiot_retry_sec(g_ctx, 0);
+    return;
+  }
+
+  const uint32_t nowMs = millis();
+  if (nowMs < nextAttemptMs) {
+    const uint32_t remainMs = nextAttemptMs - nowMs;
+    const uint16_t remainSec = static_cast<uint16_t>((remainMs + 999U) / 1000U);
+    app_set_coreiot_mqtt_connected(g_ctx, false);
+    app_set_coreiot_retry_sec(g_ctx, remainSec);
+    return;
+  }
+
+  Serial.print("[CoreIoT] Attempting MQTT connection... ");
+
+  if (client.connect("ESP32Client", g_mqttUsername, g_mqttPassword)) {
+    Serial.println("connected");
+    bool subOk = client.subscribe(kRpcTopicSub);
+    Serial.print("[CoreIoT] Subscribe ");
+    Serial.print(kRpcTopicSub);
+    Serial.print(" -> ");
+    Serial.println(subOk ? "OK" : "FAIL");
+
+    // vẫn giữ khoảng nghỉ tối thiểu 3s giữa các lần attempt.
+    // nếu broker vừa ngắt lại ngay, task cũng không spam connect liên tục.
+    retryMs = kRetryBaseMs;
+    nextAttemptMs = nowMs + kRetryBaseMs;
+    app_set_coreiot_mqtt_connected(g_ctx, true);
+    app_set_coreiot_retry_sec(g_ctx, 0);
+  } else {
+    Serial.print("failed, rc=");
+    Serial.print(client.state());
+    Serial.print(", next retry in ");
+    Serial.print(retryMs / 1000);
+    Serial.println("s");
+
+    nextAttemptMs = nowMs + retryMs;
+    app_set_coreiot_mqtt_connected(g_ctx, false);
+    app_set_coreiot_retry_sec(g_ctx, static_cast<uint16_t>((retryMs + 999U) / 1000U));
+    if (retryMs < kRetryMaxMs) {
+      retryMs = (retryMs * 2 > kRetryMaxMs) ? kRetryMaxMs : (retryMs * 2);
     }
   }
 }
@@ -280,9 +331,24 @@ static bool setup_coreiot(app_context_t *ctx) {
   xSemaphoreTake(ctx->internetSemaphore, portMAX_DELAY);
   Serial.println("[CoreIoT] Internet ready");
 
-  client.setServer(coreIOT_Server, mqttPort);
+  if (g_mqttHost[0] == '\0') {
+    strncpy(g_mqttHost, kDefaultBrokerHost, sizeof(g_mqttHost) - 1);
+    g_mqttHost[sizeof(g_mqttHost) - 1] = '\0';
+  }
+  if (g_mqttUsername[0] == '\0') {
+    strncpy(g_mqttUsername, kDefaultMqttUsername, sizeof(g_mqttUsername) - 1);
+    g_mqttUsername[sizeof(g_mqttUsername) - 1] = '\0';
+  }
+  if (g_mqttPassword[0] == '\0') {
+    strncpy(g_mqttPassword, kDefaultMqttPassword, sizeof(g_mqttPassword) - 1);
+    g_mqttPassword[sizeof(g_mqttPassword) - 1] = '\0';
+  }
+
+  client.setServer(g_mqttHost, mqttPort);
   client.setCallback(callback);
   client.setBufferSize(512);
+  app_set_coreiot_mqtt_connected(ctx, false);
+  app_set_coreiot_retry_sec(ctx, 0);
 
   return true;
 }
@@ -326,6 +392,76 @@ static void buildTelemetryPayload(
 
 } // namespace
 
+void coreiot_set_publish_enabled(bool enabled) {
+  g_coreiotPublishEnabled = enabled;
+  if (!enabled && client.connected()) {
+    client.disconnect();
+  }
+}
+
+bool coreiot_get_publish_enabled() {
+  return g_coreiotPublishEnabled;
+}
+
+bool coreiot_set_broker_host(const char *host) {
+  if (host == nullptr || host[0] == '\0') {
+    return false;
+  }
+
+  strncpy(g_mqttHost, host, sizeof(g_mqttHost) - 1);
+  g_mqttHost[sizeof(g_mqttHost) - 1] = '\0';
+  client.setServer(g_mqttHost, mqttPort);
+
+  if (client.connected()) {
+    client.disconnect();
+  }
+
+  return true;
+}
+
+void coreiot_get_broker_host(char *outHost, size_t outSize) {
+  if (outHost == nullptr || outSize == 0) {
+    return;
+  }
+
+  strncpy(outHost, g_mqttHost, outSize - 1);
+  outHost[outSize - 1] = '\0';
+}
+
+bool coreiot_set_credentials(const char *username, const char *password) {
+  if (username == nullptr || username[0] == '\0') {
+    return false;
+  }
+
+  if (password == nullptr) {
+    password = "";
+  }
+
+  strncpy(g_mqttUsername, username, sizeof(g_mqttUsername) - 1);
+  g_mqttUsername[sizeof(g_mqttUsername) - 1] = '\0';
+
+  strncpy(g_mqttPassword, password, sizeof(g_mqttPassword) - 1);
+  g_mqttPassword[sizeof(g_mqttPassword) - 1] = '\0';
+
+  if (client.connected()) {
+    client.disconnect();
+  }
+
+  return true;
+}
+
+void coreiot_get_credentials(char *outUsername, size_t usernameSize, char *outPassword, size_t passwordSize) {
+  if (outUsername != nullptr && usernameSize > 0) {
+    strncpy(outUsername, g_mqttUsername, usernameSize - 1);
+    outUsername[usernameSize - 1] = '\0';
+  }
+
+  if (outPassword != nullptr && passwordSize > 0) {
+    strncpy(outPassword, g_mqttPassword, passwordSize - 1);
+    outPassword[passwordSize - 1] = '\0';
+  }
+}
+
 void coreiot_task(void *pvParameters) {
   app_context_t *ctx = static_cast<app_context_t *>(pvParameters);
   if (ctx == nullptr || ctx->coreQueue == nullptr || ctx->tinyResultQueue == nullptr) {
@@ -354,6 +490,18 @@ void coreiot_task(void *pvParameters) {
   while (true) {
     if (WiFi.status() != WL_CONNECTED) {
       // không có internet thì loop nhẹ, chờ web task nối lại STA
+      app_set_coreiot_mqtt_connected(ctx, false);
+      app_set_coreiot_retry_sec(ctx, 0);
+      vTaskDelay(pdMS_TO_TICKS(300));
+      continue;
+    }
+
+    if (!g_coreiotPublishEnabled) {
+      if (client.connected()) {
+        client.disconnect();
+      }
+      app_set_coreiot_mqtt_connected(ctx, false);
+      app_set_coreiot_retry_sec(ctx, 0);
       vTaskDelay(pdMS_TO_TICKS(300));
       continue;
     }

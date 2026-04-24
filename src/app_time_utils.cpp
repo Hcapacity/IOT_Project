@@ -99,7 +99,11 @@ bool appTimeSyncNtp(
     return false;
   }
 
-  configTime(gmtOffsetSec, daylightOffsetSec, ntpServer);
+  configTime(gmtOffsetSec,
+             daylightOffsetSec,
+             ntpServer,
+             "time.google.com",
+             "time.cloudflare.com");
 
   const uint32_t start = millis();
   while ((millis() - start) < timeoutMs) {

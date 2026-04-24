@@ -26,6 +26,8 @@ void init_app_shared_state(app_context_t *ctx) {
   ctx->sharedState.latestHumidity = NAN;
   ctx->sharedState.wifiConnected = false;
   ctx->sharedState.lcdContentMode = LCD_CONTENT_SENSOR;
+  ctx->sharedState.coreiotMqttConnected = false;
+  ctx->sharedState.coreiotRetrySec = 0;
 }
 
 void app_set_latest_sensor(app_context_t *ctx, float temperature, float humidity) {
@@ -74,6 +76,44 @@ lcd_content_mode_t app_get_lcd_content_mode(app_context_t *ctx) {
   const lcd_content_mode_t mode = ctx->sharedState.lcdContentMode;
   unlockSharedState(ctx);
   return mode;
+}
+
+void app_set_coreiot_mqtt_connected(app_context_t *ctx, bool connected) {
+  if (!lockSharedState(ctx)) {
+    return;
+  }
+
+  ctx->sharedState.coreiotMqttConnected = connected;
+  unlockSharedState(ctx);
+}
+
+bool app_get_coreiot_mqtt_connected(app_context_t *ctx) {
+  if (!lockSharedState(ctx)) {
+    return false;
+  }
+
+  const bool connected = ctx->sharedState.coreiotMqttConnected;
+  unlockSharedState(ctx);
+  return connected;
+}
+
+void app_set_coreiot_retry_sec(app_context_t *ctx, uint16_t retrySec) {
+  if (!lockSharedState(ctx)) {
+    return;
+  }
+
+  ctx->sharedState.coreiotRetrySec = retrySec;
+  unlockSharedState(ctx);
+}
+
+uint16_t app_get_coreiot_retry_sec(app_context_t *ctx) {
+  if (!lockSharedState(ctx)) {
+    return 0;
+  }
+
+  const uint16_t retrySec = ctx->sharedState.coreiotRetrySec;
+  unlockSharedState(ctx);
+  return retrySec;
 }
 
 led_mode_t classify_temperature_mode(float temperature) {
