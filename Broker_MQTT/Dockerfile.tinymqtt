@@ -1,0 +1,12 @@
+FROM python:3.8-slim-buster
+
+WORKDIR /app
+
+COPY requirements-tinymqtt.txt ./requirements-tinymqtt.txt
+RUN pip install --no-cache-dir -r requirements-tinymqtt.txt
+
+COPY TinyMQTT.py ./TinyMQTT.py
+
+EXPOSE 1883
+
+CMD ["python", "TinyMQTT.py"]

@@ -1,0 +1,3 @@
+hbmqtt==0.9.6
+paho-mqtt==1.6.1
+websockets==8.1

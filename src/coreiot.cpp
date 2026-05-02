@@ -9,9 +9,10 @@
 #include <string.h>
 
 // ----------- CONFIGURE THESE! -----------
-static const char *kDefaultBrokerHost = "app.coreiot.io";
-static const char *kDefaultMqttUsername = "h61qp4bfrpbsp7iy5x2c";
+static const char *kDefaultBrokerHost = "127.0.0.1";
+static const char *kDefaultMqttUsername = "";
 static const char *kDefaultMqttPassword = "";
+static const char *kDeviceId = "ESP32_S3_1";
 static const int mqttPort = 1883;
 
 constexpr int32_t kGmtOffsetSec   = 7 * 3600;
@@ -188,6 +189,18 @@ static void applyRemoteLcdForecastMode(bool enabled) {
   }
 }
 
+static void log_mqtt_config() {
+  const size_t pwdLen = strlen(g_mqttPassword);
+  Serial.print("[CoreIoT] MQTT config | host=");
+  Serial.print(g_mqttHost[0] != '\0' ? g_mqttHost : "(empty)");
+  Serial.print(" | username=");
+  Serial.print(g_mqttUsername[0] != '\0' ? g_mqttUsername : "(empty)");
+  Serial.print(" | password_len=");
+  Serial.print(pwdLen);
+  Serial.print(" | publish=");
+  Serial.println(g_coreiotPublishEnabled ? "on" : "off");
+}
+
 // ----------------------------------------------------
 // MQTT connect / callback
 // ----------------------------------------------------
@@ -227,6 +240,7 @@ static void reconnect() {
   }
 
   Serial.print("[CoreIoT] Attempting MQTT connection... ");
+  log_mqtt_config();
 
   if (client.connect("ESP32Client", g_mqttUsername, g_mqttPassword)) {
     Serial.println("connected");
@@ -382,6 +396,8 @@ static void buildTelemetryPayload(
   doc["rain_prob_pct"] = p01 * 100.0f;
   doc["rain_pred"] = pred;
   doc["rain_status_short"] = rain_status_short(p01);
+
+  doc["device_id"] = kDeviceId;
 
   // publish thêm state LCD hiện tại cho dễ debug
   doc["lcd_forecast_mode"] = g_remoteLcdForecastEnabled;

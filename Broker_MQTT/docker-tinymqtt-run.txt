@@ -1,0 +1,5 @@
+# Build image
+# docker build -f Dockerfile.tinymqtt -t tinymqtt .
+
+# Run container
+# docker run -it --rm -p 1883:1883 --name tinymqtt tinymqtt
