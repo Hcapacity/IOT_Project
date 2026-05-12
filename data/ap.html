@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ESP32 AP Dashboard</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; }
+    .wrap { max-width: 1100px; margin: auto; padding: 20px; }
+    h1, h2 { margin: 0 0 12px 0; }
+    p { opacity: .9; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .card { background: #1e293b; border-radius: 18px; padding: 16px; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+    .metric { font-size: 32px; font-weight: 700; }
+    .label { font-size: 13px; opacity: .8; text-transform: uppercase; letter-spacing: .08em; }
+    .hero { display: grid; grid-template-columns: 1.2fr .8fr; gap: 16px; margin-bottom: 18px; }
+    .btn { background: #38bdf8; border: none; color: #062033; padding: 10px 14px; border-radius: 12px; font-weight: 700; cursor: pointer; }
+    .btn.secondary { background: #334155; color: #f8fafc; }
+    .btn.warn { background: #f59e0b; color: #1f1300; }
+    .badge { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #334155; font-size: 12px; }
+    canvas { width: 100%; background: #0b1220; border-radius: 14px; }
+    .small { font-size: 12px; opacity: .8; }
+    .list { display: grid; gap: 8px; margin-top: 10px; }
+    .item { padding: 10px; border-radius: 10px; background: #0f172a; }
+    .slider-wrap { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+    .slider-wrap input[type=range] { flex: 1; }
+    .value-box { min-width: 52px; text-align: center; padding: 8px 10px; border-radius: 10px; background: #0f172a; }
+    a.link { color: #7dd3fc; text-decoration: none; }
+    @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="card">
+        <h1>ESP32 Climate Dashboard</h1>
+        <p>AP mode dashboard with temperature, humidity, TinyML prediction, Wi-Fi setup, chart history, and LED brightness control.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <span class="badge">AP SSID: <span id="apSsid">-</span></span>
+          <span class="badge">AP IP: <span id="apIp">-</span></span>
+          <span class="badge">Status: <span id="wifiStatus">-</span></span>
+          <a class="link" href="/settings">Wi-Fi settings</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>External LED</h2>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn" onclick="toggleLight()">Toggle ON/OFF</button>
+          <span class="badge">State: <span id="lightState">-</span></span>
+        </div>
+
+        <div class="slider-wrap">
+          <input type="range" id="brightnessSlider" min="0" max="100" value="50" oninput="updateSliderValue(this.value)">
+          <div class="value-box"><span id="sliderValue">50</span>%</div>
+        </div>
+
+        <div style="margin-top:12px">
+          <button class="btn secondary" onclick="applyBrightness()">Apply Brightness</button>
+        </div>
+
+        <p class="small">Brightness only affects the LED when it is ON.</p>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-bottom:18px">
+      <div class="card">
+        <div class="label">Temperature</div>
+        <div class="metric"><span id="tempValue">--</span> C</div>
+      </div>
+      <div class="card">
+        <div class="label">Humidity</div>
+        <div class="metric"><span id="humValue">--</span> %</div>
+      </div>
+      <div class="card">
+        <div class="label">TinyML Prediction</div>
+        <div class="metric"><span id="tinyLabel">--</span></div>
+        <div class="small">Rain probability: <span id="tinyProb">--</span>%</div>
+      </div>
+      <div class="card">
+        <div class="label">Wi-Fi Target</div>
+        <div class="metric"><span id="staSsid">-</span></div>
+        <div class="small">STA IP: <span id="staIp">-</span></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <h2>Temperature / Humidity History</h2>
+      <canvas id="chart" width="1000" height="300"></canvas>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Quick Wi-Fi Scan</h2>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn warn" onclick="loadScan()">Scan Wi-Fi</button>
+          <a class="link" href="/settings">Advanced settings</a>
+        </div>
+        <div id="scanList" class="list"></div>
+      </div>
+      <div class="card">
+        <h2>Mode Notes</h2>
+        <p class="small">BOOT button forces ESP32 back to AP mode. If STA connection fails after 10 seconds, the board automatically returns to AP mode.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let sliderDirty = false;
+    let lastHistoryVersion = -1;
+    let stateRequestInFlight = false;
+    let historyRequestInFlight = false;
+
+    function updateSliderValue(val) {
+      document.getElementById('sliderValue').textContent = val;
+      sliderDirty = true;
+    }
+
+    function drawChart(temp, hum) {
+      const c = document.getElementById('chart');
+      const ctx = c.getContext('2d');
+      const tempData = Array.isArray(temp) ? temp.map(v => Number(v)) : [];
+      const humData = Array.isArray(hum) ? hum.map(v => Number(v)) : [];
+      const sampleCount = Math.max(tempData.length, humData.length);
+      const sampleIntervalSec = 2;
+
+      const plot = { left: 72, right: c.width - 72, top: 26, bottom: c.height - 40 };
+      const plotWidth = plot.right - plot.left;
+      const plotHeight = plot.bottom - plot.top;
+
+      const getRange = (arr, fallbackMin, fallbackMax) => {
+        const valid = arr.filter(Number.isFinite);
+        if (!valid.length) return { min: fallbackMin, max: fallbackMax };
+
+        let min = Math.min(...valid);
+        let max = Math.max(...valid);
+
+        if (min === max) {
+          const pad = Math.max(1, Math.abs(min) * 0.1);
+          min -= pad;
+          max += pad;
+        } else {
+          const pad = (max - min) * 0.15;
+          min -= pad;
+          max += pad;
+        }
+
+        return { min, max };
+      };
+
+      const tempRange = getRange(tempData, 20, 40);
+      const humRange = getRange(humData, 30, 90);
+
+      const getX = index => sampleCount <= 1
+        ? plot.left + plotWidth / 2
+        : plot.left + (index * plotWidth) / (sampleCount - 1);
+
+      const getY = (value, range) =>
+        plot.bottom - ((value - range.min) / (range.max - range.min)) * plotHeight;
+
+      const drawSeries = (arr, color, range) => {
+        let hasPoint = false;
+        let started = false;
+
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+
+        for (let i = 0; i < sampleCount; i++) {
+          const value = arr[i];
+          if (!Number.isFinite(value)) {
+            started = false;
+            continue;
+          }
+
+          const x = getX(i);
+          const y = getY(value, range);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+          hasPoint = true;
+        }
+
+        if (hasPoint) ctx.stroke();
+
+        for (let i = 0; i < sampleCount; i++) {
+          const value = arr[i];
+          if (!Number.isFinite(value)) continue;
+          const x = getX(i);
+          const y = getY(value, range);
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      };
+
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0, 0, c.width, c.height);
+
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      ctx.font = '12px Arial';
+
+      for (let i = 0; i <= 4; i++) {
+        const y = plot.top + (plotHeight * i) / 4;
+        ctx.beginPath();
+        ctx.moveTo(plot.left, y);
+        ctx.lineTo(plot.right, y);
+        ctx.stroke();
+
+        const tempVal = tempRange.max - ((tempRange.max - tempRange.min) * i) / 4;
+        const humVal = humRange.max - ((humRange.max - humRange.min) * i) / 4;
+
+        ctx.fillStyle = '#f87171';
+        ctx.fillText(tempVal.toFixed(1) + 'C', 8, y + 4);
+        ctx.fillStyle = '#4ade80';
+        ctx.fillText(humVal.toFixed(0) + '%', c.width - 54, y + 4);
+      }
+
+      const labelCount = sampleCount > 1 ? Math.min(sampleCount, 5) : sampleCount;
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'center';
+
+      for (let i = 0; i < labelCount; i++) {
+        const index = labelCount === 1 ? 0 : Math.round((i * (sampleCount - 1)) / (labelCount - 1));
+        const x = getX(index);
+        const secondsAgo = (sampleCount - 1 - index) * sampleIntervalSec;
+        const label = secondsAgo === 0 ? 'now' : `${secondsAgo}s`;
+        ctx.fillText(label, x, c.height - 12);
+      }
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#f87171';
+      ctx.fillText('Temperature', plot.left, 18);
+      ctx.fillStyle = '#4ade80';
+      ctx.fillText('Humidity', plot.left + 120, 18);
+
+      drawSeries(tempData, '#f87171', tempRange);
+      drawSeries(humData, '#4ade80', humRange);
+    }
+
+    async function loadState() {
+      if (stateRequestInFlight) return;
+      stateRequestInFlight = true;
+      try {
+        const res = await fetch('/api/state', { cache: 'no-store' });
+        const s = await res.json();
+
+        document.getElementById('tempValue').textContent = s.temperatureText;
+        document.getElementById('humValue').textContent = s.humidityText;
+        document.getElementById('tinyLabel').textContent = s.tinyLabel;
+        document.getElementById('tinyProb').textContent = s.tinyProbability;
+        document.getElementById('wifiStatus').textContent = s.wifiStatus;
+        document.getElementById('apSsid').textContent = s.apSsid || '-';
+        document.getElementById('apIp').textContent = s.apIp;
+        document.getElementById('staIp').textContent = s.staIp;
+        document.getElementById('staSsid').textContent = s.staSsid || '-';
+        document.getElementById('lightState').textContent = s.userLightOn ? 'ON' : 'OFF';
+
+        const slider = document.getElementById('brightnessSlider');
+        if (!sliderDirty && document.activeElement !== slider) {
+          slider.value = s.userLightBrightness;
+          document.getElementById('sliderValue').textContent = s.userLightBrightness;
+        }
+
+        if (typeof s.historyVersion === 'number' && s.historyVersion !== lastHistoryVersion) {
+          await loadHistory();
+        }
+      } finally {
+        stateRequestInFlight = false;
+      }
+    }
+
+    async function loadHistory() {
+      if (historyRequestInFlight) return;
+      historyRequestInFlight = true;
+      try {
+        const res = await fetch('/api/history', { cache: 'no-store' });
+        const h = await res.json();
+        if (typeof h.historyVersion === 'number') {
+          lastHistoryVersion = h.historyVersion;
+        }
+        drawChart(h.tempHistory, h.humHistory);
+      } finally {
+        historyRequestInFlight = false;
+      }
+    }
+
+    async function toggleLight() {
+      await fetch('/api/light/toggle', { method: 'POST' });
+      await loadState();
+    }
+
+    async function applyBrightness() {
+      const val = document.getElementById('brightnessSlider').value;
+      await fetch('/api/light/brightness', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'value=' + encodeURIComponent(val)
+      });
+      sliderDirty = false;
+      await loadState();
+    }
+
+    async function loadScan() {
+      const res = await fetch('/api/scan', { cache: 'no-store' });
+      const arr = await res.json();
+      const box = document.getElementById('scanList');
+      box.innerHTML = '';
+      if (!arr.length) {
+        box.innerHTML = '<div class="item">Scanning in background or no networks found yet.</div>';
+        return;
+      }
+      arr.forEach(w => {
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.textContent = `${w.ssid || '(hidden)'} | ${w.quality}% | ${w.enc}`;
+        box.appendChild(div);
+      });
+    }
+
+    loadState();
+    setInterval(loadState, 1000);
+  </script>
+</body>
+</html>

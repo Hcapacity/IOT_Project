@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wi-Fi Settings</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; }
+    .wrap { max-width: 960px; margin: auto; padding: 20px; }
+    .card { background: #1e293b; border-radius: 18px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { background: #38bdf8; border: none; color: #062033; padding: 10px 14px; border-radius: 12px; font-weight: 700; cursor: pointer; }
+    .btn.secondary { background: #334155; color: #f8fafc; }
+    input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; }
+    .list { display: grid; gap: 8px; margin-top: 10px; }
+    .item { padding: 10px; border-radius: 10px; background: #0f172a; }
+    a { color: #7dd3fc; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Wi-Fi Settings</h1>
+      <a href="/">Back to dashboard</a>
+    </div>
+
+    <div class="card">
+      <h2>Available Wi-Fi Networks</h2>
+      <div class="row">
+        <button class="btn" onclick="loadScan()">Scan Wi-Fi</button>
+      </div>
+      <div id="scanList" class="list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Saved Wi-Fi Profiles</h2>
+      <div class="row">
+        <button class="btn secondary" onclick="loadSaved()">Refresh Saved</button>
+        <button class="btn secondary" onclick="forgetAll()">Forget All</button>
+      </div>
+      <div id="savedList" class="list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Connect to Wi-Fi</h2>
+      <form method="POST" action="/connect">
+        <div class="row">
+          <input id="ssid" name="ssid" placeholder="SSID">
+          <input id="password" name="password" placeholder="Password">
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" type="submit">Connect & Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function fillWifi(ssid, pass) {
+      document.getElementById('ssid').value = ssid || '';
+      document.getElementById('password').value = pass || '';
+    }
+
+    async function loadScan() {
+      const res = await fetch('/api/scan', { cache: 'no-store' });
+      const arr = await res.json();
+      const box = document.getElementById('scanList');
+      box.innerHTML = '';
+      if (!arr.length) {
+        box.innerHTML = '<div class="item">Scanning in background or no scan results available yet.</div>';
+        return;
+      }
+      arr.forEach(w => {
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.textContent = `${w.ssid || '(hidden)'} | ${w.quality}% | ${w.enc}`;
+        box.appendChild(div);
+      });
+    }
+
+    async function loadSaved() {
+      const res = await fetch('/api/saved', { cache: 'no-store' });
+      const arr = await res.json();
+      const box = document.getElementById('savedList');
+      box.innerHTML = '';
+      if (!arr.length) {
+        box.innerHTML = '<div class="item">No saved profiles found.</div>';
+        return;
+      }
+      arr.forEach(w => {
+        const div = document.createElement('div');
+        div.className = 'item';
+
+        const title = document.createElement('b');
+        title.textContent = w.ssid || '(hidden)';
+
+        const actions = document.createElement('div');
+        actions.style.marginTop = '8px';
+
+        const button = document.createElement('button');
+        button.className = 'btn secondary';
+        button.type = 'button';
+        button.textContent = 'Use saved profile';
+        button.addEventListener('click', () => fillWifi(w.ssid || '', w.pass || ''));
+
+        actions.appendChild(button);
+        div.appendChild(title);
+        div.appendChild(actions);
+        box.appendChild(div);
+      });
+    }
+
+    async function forgetAll() {
+      await fetch('/forget', { method: 'POST' });
+      loadSaved();
+    }
+
+    loadSaved();
+  </script>
+</body>
+</html>

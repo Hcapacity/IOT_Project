@@ -1,71 +1,79 @@
 #include "neo_blinky.h"
+
 #include <math.h>
 
-static uint32_t humidity_to_color(Adafruit_NeoPixel &strip, float humidity) {
-  // Giới hạn về 0..100
-  humidity = constrain(humidity, 0.0f, 100.0f);
+namespace {
 
-  // Đổi theo từng 1%
-  int h = (int)roundf(humidity); // 0..100
+uint32_t mapHumidityToColor(Adafruit_NeoPixel &strip, float humidityPercent) {
+  humidityPercent = constrain(humidityPercent, 0.0f, 100.0f);
+  const int roundedHumidityPercent = static_cast<int>(roundf(humidityPercent));
 
-  uint8_t r = 0;
-  uint8_t g = 0;
-  uint8_t b = 0;
+  uint8_t red = 0;
+  uint8_t green = 0;
+  uint8_t blue = 0;
 
-  if (h <= 50) {
-    // 0..50%: đỏ -> xanh lá
-    float t = h / 50.0f;
-    r = (uint8_t)roundf(255.0f * (1.0f - t));
-    g = (uint8_t)roundf(255.0f * t);
-    b = 0;
+  if (roundedHumidityPercent <= 50) {
+    const float blendRatio = roundedHumidityPercent / 50.0f;
+    red = static_cast<uint8_t>(roundf(255.0f * (1.0f - blendRatio)));
+    green = static_cast<uint8_t>(roundf(255.0f * blendRatio));
   } else {
-    // 51..100%: xanh lá -> xanh dương
-    float t = (h - 50) / 50.0f;
-    r = 0;
-    g = (uint8_t)roundf(255.0f * (1.0f - t));
-    b = (uint8_t)roundf(255.0f * t);
+    const float blendRatio = (roundedHumidityPercent - 50) / 50.0f;
+    green = static_cast<uint8_t>(roundf(255.0f * (1.0f - blendRatio)));
+    blue = static_cast<uint8_t>(roundf(255.0f * blendRatio));
   }
 
-  return strip.Color(r, g, b);
+  return strip.Color(red, green, blue);
 }
 
+void clearStrip(Adafruit_NeoPixel &strip) {
+  strip.clear();
+  strip.show();
+}
+
+void applyHumidityColor(Adafruit_NeoPixel &strip, float humidityPercent) {
+  strip.setPixelColor(0, mapHumidityToColor(strip, humidityPercent));
+  strip.show();
+}
+
+}  // namespace
+
 void neo_pixel_task(void *pvParameters) {
-  app_context_t *ctx = static_cast<app_context_t *>(pvParameters);
-  if (ctx == nullptr || ctx->neoQueue == nullptr) {
+  app_context_t *appContext = static_cast<app_context_t *>(pvParameters);
+  if (appContext == nullptr || appContext->neoQueue == nullptr) {
     vTaskDelete(nullptr);
     return;
   }
 
-  Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
-  strip.begin();
-  strip.clear();
-  strip.show();
+  Adafruit_NeoPixel statusStrip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+  statusStrip.begin();
+  clearStrip(statusStrip);
 
-  bool enabled = true;
-  neo_command_t cmd{};
+  bool isStripEnabled = true;
+  neo_command_t incomingCommand{};
 
   while (true) {
-    if (xQueueReceive(ctx->neoQueue, &cmd, portMAX_DELAY) == pdTRUE) {
-      if (cmd.type == NEO_CMD_SET_ENABLE) {
-        enabled = cmd.enabled;
+    if (xQueueReceive(appContext->neoQueue, &incomingCommand, portMAX_DELAY) != pdTRUE) {
+      continue;
+    }
 
-        if (!enabled) {
-          strip.clear();
-          strip.show();
-        }
+    if (incomingCommand.type == NEO_CMD_SET_ENABLE) {
+      isStripEnabled = incomingCommand.enabled;
+
+      if (!isStripEnabled) {
+        clearStrip(statusStrip);
+      }
+      continue;
+    }
+
+    if (incomingCommand.type == NEO_CMD_SENSOR_UPDATE) {
+      if (!isStripEnabled) {
+        // Keep the LED physically off while disabled.
+        // If we only skip updates here, the previous color would remain latched on the NeoPixel.
+        clearStrip(statusStrip);
         continue;
       }
 
-      if (cmd.type == NEO_CMD_SENSOR_UPDATE) {
-        if (!enabled) {
-          strip.clear();
-          strip.show();
-          continue;
-        }
-
-        strip.setPixelColor(0, humidity_to_color(strip, cmd.humidity));
-        strip.show();
-      }
+      applyHumidityColor(statusStrip, incomingCommand.humidity);
     }
   }
 }
