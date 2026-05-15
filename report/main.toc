@@ -37,25 +37,24 @@
 \contentsline {subsection}{\numberline {4.6}LCD Task}{20}{subsection.4.6}%
 \contentsline {subsection}{\numberline {4.7}Web Server Task}{21}{subsection.4.7}%
 \contentsline {subsection}{\numberline {4.8}TinyML Task: Edge-Based Rain Forecasting Pipeline}{24}{subsection.4.8}%
-\contentsline {subsection}{\numberline {4.9}CoreIOT Task: Cloud Telemetry and Remote Configuration}{32}{subsection.4.9}%
-\contentsline {subsection}{\numberline {4.10}MQTT Broker Implementation: TinyMQTT Service}{36}{subsection.4.10}%
-\contentsline {subsection}{\numberline {4.11}Time Utility Module}{42}{subsection.4.11}%
-\contentsline {subsection}{\numberline {4.12}Implementation Qualities}{43}{subsection.4.12}%
-\contentsline {section}{\numberline {5}Testing}{44}{section.5}%
-\contentsline {subsection}{\numberline {5.1}Testing Methodology}{44}{subsection.5.1}%
-\contentsline {subsection}{\numberline {5.2}Test Plan}{44}{subsection.5.2}%
-\contentsline {subsection}{\numberline {5.3}Representative Log Evidence}{44}{subsection.5.3}%
-\contentsline {subsection}{\numberline {5.4}Timing Analysis by Task}{45}{subsection.5.4}%
-\contentsline {subsection}{\numberline {5.5}Evaluation of RTOS Timing Quality}{45}{subsection.5.5}%
-\contentsline {subsection}{\numberline {5.6}Task-by-Task Functional Verification}{47}{subsection.5.6}%
-\contentsline {subsection}{\numberline {5.7}End-to-End Responsiveness}{48}{subsection.5.7}%
-\contentsline {subsection}{\numberline {5.8}Current Limitations of the Test Evidence}{49}{subsection.5.8}%
-\contentsline {section}{\numberline {6}Results and Discussion}{49}{section.6}%
-\contentsline {subsection}{\numberline {6.1}What Works Well}{49}{subsection.6.1}%
-\contentsline {subsection}{\numberline {6.2}Tradeoffs in the Current Design}{50}{subsection.6.2}%
-\contentsline {subsection}{\numberline {6.3}Current Weaknesses}{51}{subsection.6.3}%
-\contentsline {subsection}{\numberline {6.4}Future Development Directions}{52}{subsection.6.4}%
-\contentsline {section}{\numberline {7}Conclusion and Future Work}{52}{section.7}%
-\contentsline {subsection}{\numberline {7.1}Conclusion}{52}{subsection.7.1}%
-\contentsline {subsection}{\numberline {7.2}What Was Learned}{53}{subsection.7.2}%
-\contentsline {subsection}{\numberline {7.3}Future Work}{53}{subsection.7.3}%
+\contentsline {subsection}{\numberline {4.9}CoreIOT Task}{29}{subsection.4.9}%
+\contentsline {subsection}{\numberline {4.10}Time Utility Module}{30}{subsection.4.10}%
+\contentsline {subsection}{\numberline {4.11}Implementation Qualities}{31}{subsection.4.11}%
+\contentsline {section}{\numberline {5}Testing}{31}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Testing Methodology}{31}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Test Plan}{31}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Representative Log Evidence}{32}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Timing Analysis by Task}{33}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Evaluation of RTOS Timing Quality}{34}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}Task-by-Task Functional Verification}{34}{subsection.5.6}%
+\contentsline {subsection}{\numberline {5.7}End-to-End Responsiveness}{36}{subsection.5.7}%
+\contentsline {subsection}{\numberline {5.8}Current Limitations of the Test Evidence}{36}{subsection.5.8}%
+\contentsline {section}{\numberline {6}Results and Discussion}{37}{section.6}%
+\contentsline {subsection}{\numberline {6.1}What Works Well}{37}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Tradeoffs in the Current Design}{37}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Current Weaknesses}{38}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}Future Development Directions}{39}{subsection.6.4}%
+\contentsline {section}{\numberline {7}Conclusion and Future Work}{40}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Conclusion}{40}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}What Was Learned}{40}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Future Work}{41}{subsection.7.3}%

@@ -227,21 +227,126 @@ web task signals \texttt{internetSemaphore} once STA connectivity is confirmed.
 
 The TinyML task implements an on-device rain prediction system, shifting the analytical workload from the cloud directly to the edge. This approach minimizes latency, reduces network dependency, and demonstrates the viability of executing neural networks on resource-constrained microcontrollers. The development and deployment of this predictive model follow a comprehensive Machine Learning pipeline, spanning from offline dataset preparation to real-time RTOS integration.
 
-\subsubsection*{1) Dataset Overview and Preprocessing}
-The predictive model is built upon a historical meteorological dataset collected in Ho Chi Minh City, encompassing continuous weather observations from 2009 to 2020. The primary objective is to perform a binary classification, categorizing the upcoming weather state as either "RAIN" (Class 1) or "SUNNY/SAFE" (Class 0). 
+\subsection*{EDA}
+The predictive model is built upon a historical meteorological dataset collected in Ho Chi Minh City, encompassing continuous weather observations from 2009 to 2020. The primary objective is to perform a binary classification, categorizing the upcoming weather state as either "RAIN" (Class 1) or "SUNNY/SAFE" (Class 0).
+
+\textbf{Dataset Overview:} The dataset comprises 34,976 valid samples with zero missing values across all features. The temporal span extends from January 1, 2009, to December 20, 2020, representing a complete 4,372-day period with 100\% data coverage.
+
+\noindent\textbf{Dataset Features:} Table presents the complete feature structure of the meteorological dataset:
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{|l|l|r|r|}
+    \hline
+    \textbf{Feature Name} & \textbf{Data Type} & \textbf{Valid Samples} & \textbf{Missing Values} \\
+    \hline
+    Date & datetime64[ns] & 34,976 & 0 \\
+    Time & object & 34,976 & 0 \\
+    Weather & object & 34,976 & 0 \\
+    Temp & object & 34,976 & 0 \\
+    Feels & object & 34,976 & 0 \\
+    Wind & object & 34,976 & 0 \\
+    Gust & object & 34,976 & 0 \\
+    Rain & object & 34,976 & 0 \\
+    Humidity & object & 34,976 & 0 \\
+    Cloud & object & 34,976 & 0 \\
+    Pressure & object & 34,976 & 0 \\
+    Vis & object & 34,976 & 0 \\
+    \hline
+    \end{tabular}
+    \caption{Dataset Features and Data Quality Metrics}
+    \label{tab:features}
+\end{table}
+
+\noindent\textbf{Sample Data Examples:} Table displays five representative samples randomly selected from the dataset to illustrate the data characteristics and format:
+
+\begin{table}[H]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|l|l|l|l|l|l|l|l|l|l|l|}
+    \hline
+    \textbf{Date} & \textbf{Time} & \textbf{Weather} & \textbf{Temp} & \textbf{Feels} & \textbf{Wind} & \textbf{Gust} & \textbf{Rain} & \textbf{Humidity} & \textbf{Cloud} & \textbf{Pressure} & \textbf{Vis} \\
+    \hline
+    2010-10-09 & 12:00 & Partly cloudy & 31°C & 39°C & 6 km/h W & 7 km/h & 0.0 mm & 72\% & 59\% & 1006 mb & Excellent \\
+    2013-11-19 & 03:00 & Clear & 23°C & 26°C & 8 km/h NNE & 13 km/h & 0.0 mm & 90\% & 14\% & 1010 mb & Excellent \\
+    2016-04-22 & 21:00 & Clear & 28°C & 32°C & 22 km/h SE & 31 km/h & 0.0 mm & 70\% & 4\% & 1009 mb & Excellent \\
+    2013-12-22 & 00:00 & Clear & 22°C & 23°C & 4 km/h N & 7 km/h & 0.0 mm & 85\% & 22\% & 1013 mb & Excellent \\
+    2019-12-15 & 06:00 & Partly cloudy & 25°C & 27°C & 7 km/h NNE & 9 km/h & 0.0 mm & 77\% & 9\% & 1012 mb & Excellent \\
+    \hline
+    \end{tabular}
+    }
+    \caption{Representative Dataset Samples}
+    \label{tab:samples}
+\end{table}
+
+\noindent\textbf{Temporal Distribution Analysis:} Table summarizes the temporal characteristics of the dataset:
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{|l|l|l|}
+    \hline
+    \textbf{Temporal Criterion} & \textbf{Value} & \textbf{Notes} \\
+    \hline
+    Start Date & 01/01/2009 & First recorded sample \\
+    End Date & 20/12/2020 & Last recorded sample \\
+    Total Time Span & 4,372 days & Linear period from start to end \\
+    Days with Data & 4,372 days & Coverage: 100.00\% \\
+    \hline
+    \end{tabular}
+    \caption{Temporal Distribution Analysis}
+    \label{tab:temporal}
+\end{table}
 
 During the offline data preparation phase, the raw weather labels were grouped to form the binary target variable. Conditions containing keywords such as 'rain', 'thunder', 'drizzle', or 'storm' were mapped to Class 1, while all other conditions were mapped to Class 0. To ensure the neural network converges effectively during training, the input features were standardized using \texttt{StandardScaler}, giving the data a mean of zero and a variance of one.
 
-\subsubsection*{2) Feature Engineering and Extraction}
-The edge system relies on a single DHT20 sensor to capture ambient temperature and humidity. To maximize the predictive power of this single data source, the system does not feed raw, instantaneous readings directly into the model. Instead, it derives an 8-feature input vector designed to capture both environmental trends and cyclical temporal patterns:
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{images/f3.png} 
+    \caption{Dataset overview}
+\end{figure}
+
+\subsection*{Feature Engineering and Extraction}
+The raw dataset contains the original weather observation fields, but the model is trained on a compact numerical representation derived from \texttt{Temp}, \texttt{Humidity}, \texttt{Date}, and \texttt{Time}. The preprocessing pipeline first extracts numerical temperature and humidity values, then converts calendar information into cyclical time features, and finally constructs a feature vector that captures both the current state and short-term change patterns.
+
+The exact feature engineering steps are implemented as follows:
 \begin{enumerate}
-    \item \textbf{Batch Averages ($T_{avg}, H_{avg}$):} The mean temperature and humidity are calculated over a sliding window. Filtering out momentary sensor noise provides a stable baseline of the current microclimate.
-    \item \textbf{Temporal Deltas ($\Delta T, \Delta H$):} The difference between the current batch averages and the previous batch averages. This captures the dynamic rate of change (e.g., a sudden drop in temperature combined with rapidly rising humidity), which is a critical meteorological indicator for incoming rain.
-    \item \textbf{Cyclical Time Features ($\sin(m), \cos(m), \sin(h), \cos(h)$):} Time is inherently cyclical, but standard integer representations (e.g., hour 23 and hour 0) appear mathematically distant to a neural network. By transforming the current month and hour using sine and cosine functions, the model correctly interprets the continuous, circular nature of time, helping it recognize diurnal variations and seasonal monsoon patterns in Ho Chi Minh City.
+  \item \textbf{Temperature and humidity extraction:} \texttt{Temp\_c} is extracted from the \texttt{Temp} string field, while \texttt{Hum\_p} is extracted from \texttt{Humidity}. This converts the raw text measurements into numeric values usable by the neural network.
+  \item \textbf{Temporal encoding:} The month is mapped from the date string and the hour is parsed from the time string. Instead of using raw month and hour values directly, the model encodes them with sine and cosine functions to preserve their circular nature.
+  \item \textbf{Short-term deltas:} \texttt{Temp\_diff} and \texttt{Hum\_diff} are computed using the first-order difference between consecutive samples. These variables represent local trend changes, which are useful for capturing sudden weather transitions.
+  \item \textbf{Final input vector:} The model uses eight engineered features: \texttt{Temp\_c}, \texttt{Hum\_p}, \texttt{Temp\_diff}, \texttt{Hum\_diff}, \texttt{Month\_sin}, \texttt{Month\_cos}, \texttt{Hour\_sin}, and \texttt{Hour\_cos}.
 \end{enumerate}
 
-\subsubsection*{3) Model Architecture and Training}
-The core logic is driven by a sequential Artificial Neural Network (ANN) designed via TensorFlow/Keras. The architecture is intentionally lightweight to accommodate the ESP32-S3's memory constraints while remaining capable of capturing non-linear relationships within the 8 features. The network topology consists of:
+This design is appropriate for the dataset because it combines instantaneous weather state with trend information and periodic time context. The scaling step using \texttt{StandardScaler} is then applied only on the training split, ensuring that all features contribute to learning on a comparable numerical scale.
+
+\noindent\textbf{Evaluation of the EDA figures.} The descriptive statistics figure shows that the engineered variables are well formed and fully populated across 34,976 samples. The central values are physically plausible: temperature is concentrated around the high-20s Celsius, humidity is centered in the mid-70\%, and the temporal features have means close to zero after sine-cosine encoding, which is expected for cyclical variables. The spread of \texttt{Temp\_diff} and \texttt{Hum\_diff} is also moderate, indicating that the dataset contains both stable periods and noticeable transitions rather than being dominated by flat readings.
+
+The class-distribution chart shows a clear imbalance, with Class 0 accounting for 78.8\% and Class 1 accounting for 21.2\%. This means the problem is not perfectly balanced, so accuracy alone is not sufficient to judge model quality. The imbalance also explains why the model should be evaluated with additional measures such as precision, recall, and F1-score, especially for the rain class.
+
+The correlation heatmap confirms that no single feature has an overwhelmingly strong linear relationship with the target label. The label correlates only weakly with the engineered inputs, which is a useful result because it suggests the rain pattern is not trivially separable by one variable alone. At the same time, the heatmap shows meaningful dependencies among features, such as the strong negative relationship between \texttt{Temp\_diff} and \texttt{Hum\_diff}, as well as the seasonal and daily structure captured by the cyclic time encodings. This supports the choice of a small neural network, since a nonlinear model is better suited than a simple linear classifier for combining weak but complementary signals.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\textwidth]{images/f6.png} 
+  \caption{Statistical Summary of Engineered Features}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{images/f5.png} 
+  \caption{Class Distribution After Binary Labeling}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1\textwidth]{images/f4.png} 
+  \caption{Feature Correlation Heatmap}
+\end{figure}
+
+\subsection*{Model Architecture and Training}
+\noindent\textbf{Model Benchmarking and ANN Selection.} Table \ref{tab:model_benchmark} summarizes the candidate models evaluated on the same feature set. The results show that XGBoost achieved the highest accuracy, but the ANN was selected for the final ESP32 implementation because it provides competitive performance while remaining a compact deep learning model that can be quantized and deployed through TensorFlow Lite Micro.
+
+
+The core logic is driven by a sequential Artificial Neural Network (ANN) designed via TensorFlow/Keras. Although the benchmark shows that XGBoost has a slightly higher accuracy, the ANN was intentionally chosen because the goal of this project is to demonstrate a deployable deep learning pipeline on the ESP32-S3. The ANN is lightweight enough for full integer quantization, yet expressive enough to capture non-linear relationships in the engineered features. The network topology consists of:
 \begin{itemize}
     \item An \textbf{Input Layer} accepting the 8 standardized features.
     \item A \textbf{Hidden Dense Layer} with 12 neurons utilizing the ReLU (Rectified Linear Unit) activation function.
@@ -249,14 +354,35 @@ The core logic is driven by a sequential Artificial Neural Network (ANN) designe
     \item An \textbf{Output Layer} with a single neuron applying a Sigmoid activation function, producing a final probability score between 0.0 and 1.0.
 \end{itemize}
 
-During the offline training phase, the dataset was split into an 80\% training set and a 20\% testing set. The model was compiled using the Adam optimizer and a binary cross-entropy loss function. After training for 50 epochs with a batch size of 32, the baseline model achieved an impressive accuracy of \textbf{84.45\%} on the 32-bit floating-point (float32) test set.
+During the offline training phase, the dataset was split into an 80\% training set and a 20\% testing set. The model was compiled using the Adam optimizer and a binary cross-entropy loss function. After training for 50 epochs with a batch size of 32, the baseline model achieved an accuracy of \textbf{84.86\%} on the 32-bit floating-point (float32) test set.
+
+\begin{table}[H]
+    \centering
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{|l|r|r|r|r|}
+    \hline
+    \textbf{Model} & \textbf{Accuracy (\%)} & \textbf{F1-Score} & \textbf{Parameters / Nodes} & \textbf{Prediction Time per Sample (ms)} \\
+    \hline
+    XGBoost & 84.33 & 0.5941 & 100 & 0.0048 \\
+    \textbf{ANN (Selected)} & 84.28 & 0.5572 & 221 & 0.1305 \\
+    Decision Tree & 83.73 & 0.5715 & 1,187 & 0.0012 \\
+    KNN (k=5) & 83.32 & 0.5792 & 223,840 & 0.0606 \\
+    SVM (RBF) & 82.76 & 0.4311 & 81,224 & 1.4149 \\
+    Random Forest & 81.93 & 0.5549 & 1,000,668 & 0.0436 \\
+    Gaussian Naive Bayes & 76.89 & 0.4079 & 32 & 0.0015 \\
+    \hline
+    \end{tabular}
+    }
+    \caption{Benchmark Comparison of Candidate Models}
+    \label{tab:model_benchmark}
+\end{table}
 
 \subsubsection*{4) Full Integer Quantization for Edge Deployment}
 To deploy this trained model onto the ESP32-S3, it required an aggressive optimization process using the TensorFlow Lite Converter. Deploying a float32 model would consume excessive SRAM and execution time. Therefore, the model underwent \textbf{Full Integer Quantization (INT8)}.
 
 A Representative Dataset generator (yielding 100 random training samples) was used to calibrate the dynamic range of the model's weights and activations. This calibration allowed the converter to safely map the 32-bit floats into 8-bit integers. The resulting optimized model (\texttt{.tflite}) was then converted into a C-byte array header file (\texttt{model\_data.h}) using the \texttt{xxd} utility. 
 
-Remarkably, after this strict quantization process, the model retained an accuracy of approximately \textbf{83\%}. This minor degradation (around 1.45\%) is a highly favorable trade-off, as the INT8 model drastically reduces the memory footprint and accelerates inference time on the microcontroller without utilizing floating-point hardware during the forward pass.
+Remarkably, after this strict quantization process, the model retained an accuracy of \textbf{84.43\%}. This corresponds to an absolute drop of only \textbf{0.43 percentage points}, or about \textbf{0.51\%} relative to the original float32 accuracy. This is a highly favorable trade-off because the INT8 model drastically reduces the memory footprint and accelerates inference time on the microcontroller without utilizing floating-point hardware during the forward pass.
 
 \subsubsection*{5) C++ Implementation in the RTOS Environment}
 Within the firmware, the \texttt{tiny\_ml\_task} manages the real-time execution of this pipeline. It utilizes the \texttt{tflite::MicroInterpreter} and an \texttt{AllOpsResolver} initialized with a 16 KB tensor arena. The implementation strictly mirrors the offline training pipeline:
@@ -268,41 +394,286 @@ Within the firmware, the \texttt{tiny\_ml\_task} manages the real-time execution
 \end{itemize}
 
 Finally, this prediction, along with the calculated probability percentage and timestamps, is packaged into a \texttt{tinyml\_result\_t} structure and pushed to the \texttt{tinyResultQueue}. It is subsequently consumed by the LCD task for immediate local display and by the CoreIOT task for remote cloud telemetry.
-\subsection{CoreIOT Task}
-The CoreIOT task is responsible for MQTT connectivity and telemetry publishing.
-Its logic is intentionally staged and highly configurable:
+
+\noindent\textbf{Mathematical Formulation of the Selected ANN.} Let the final engineered input vector be
+\[
+\mathbf{x} = [x_1, x_2, \ldots, x_8]^T
+= [\texttt{Temp\_c}, \texttt{Hum\_p}, \texttt{Temp\_diff}, \texttt{Hum\_diff}, \texttt{Month\_sin}, \texttt{Month\_cos}, \texttt{Hour\_sin}, \texttt{Hour\_cos}]^T.
+\]
+The selected ANN transforms this input into a rain probability through two hidden layers and one sigmoid output layer:
+\[
+\mathbf{h}_1 = \operatorname{ReLU}(\mathbf{W}_1\mathbf{x} + \mathbf{b}_1),
+\]
+\[
+\mathbf{h}_2 = \operatorname{ReLU}(\mathbf{W}_2\mathbf{h}_1 + \mathbf{b}_2),
+\]
+\[
+\hat{y} = \sigma(\mathbf{W}_3\mathbf{h}_2 + b_3),
+\]
+where \(\operatorname{ReLU}(z) = \max(0, z)\) and \(\sigma(z) = \frac{1}{1 + e^{-z}}\). The output \(\hat{y} \in [0,1]\) represents the predicted probability of rain. The final class decision is computed as
+\[
+\hat{c} =
+\begin{cases}
+1, & \text{if } \hat{y} \geq 0.5, \\
+0, & \text{otherwise}.
+\end{cases}
+\]
+This formulation matches the deployed ANN structure and explains how the firmware converts the 8-feature input vector into a binary weather forecast.
+
+
+\subsection{CoreIOT Task: Cloud Telemetry and Remote Configuration}
+
+The CoreIOT task is the cloud-integration layer of the entire embedded system. Its primary responsibility is to establish persistent connectivity with an external MQTT broker (either the CoreIOT cloud platform or a custom local MQTT server) and to bidirectionally stream telemetry data and remote control commands. The task is designed to be highly configurable, extensible, and reactive to network state changes, allowing the system to adapt to different deployment scenarios without firmware recompilation.
+
+\subsection*{Initialization and Network Readiness}
+
+The CoreIOT task does not start immediately after boot. Instead, it follows a staged initialization pattern:
 \begin{enumerate}
-  \item wait on \texttt{internetSemaphore},
-  \item retrieve dynamic MQTT connection parameters (broker host/IP, username, password) configured via the web interface,
-  \item connect to the specified MQTT broker,
-  \item subscribe to the RPC request topic,
-  \item periodically publish telemetry every 10 seconds.
+  \item \textbf{Wait for Internet Readiness:} The task blocks on \texttt{internetSemaphore}, which is signaled by the Web Server task only after the device has successfully established Wi-Fi connectivity in STA mode.
+  \item \textbf{Retrieve Configuration:} Once the semaphore is released, the task retrieves the dynamic MQTT connection parameters from persistent storage (managed by \texttt{Preferences}). This includes the \textbf{broker host}, \textbf{broker port}, \textbf{username}, and \textbf{password}.
+  \item \textbf{Connect to Broker:} The task attempts to establish a TCP connection to the specified MQTT broker using the provided credentials.
+  \item \textbf{Subscribe to Control Topics:} After successful connection, the task subscribes to RPC (Remote Procedure Call) request topics, enabling the cloud dashboard to send commands back to the device.
+  \item \textbf{Periodic Telemetry Publishing:} Once fully initialized, the task enters a loop that publishes telemetry data every 10 seconds.
 \end{enumerate}
 
-A significant architectural extension in this module is its support for dynamic server integration. The MQTT broker host and credentials are not strictly hard-coded into the firmware. Instead, the task retrieves these settings from the persistent configuration managed by the Web Server task. This allows users to easily redirect the telemetry stream from the default CoreIOT cloud platform to a custom local MQTT broker by simply updating the host IP address via the STA web interface. This extensibility ensures the system can seamlessly adapt to private, local IoT deployments on the fly, entirely without the need to modify source code or recompile the firmware.
+This staged approach ensures that the cloud task does not consume resources or attempt connection during AP mode, and it allows the Wi-Fi subsystem to stabilize before the cloud subsystem is activated.
 
-The telemetry payload includes:
+\subsection*{Dynamic Broker Configuration and Extensibility}
+
+A key architectural feature of the CoreIOT task is its \textbf{dynamic server integration}. The MQTT broker host, port, username, and password are \textbf{not hard-coded} into the firmware. Instead, these settings are:
 \begin{itemize}
-  \item temperature,
-  \item humidity,
-  \item timestamp (epoch if valid, otherwise tick-based fallback),
-  \item rain probability,
-  \item rain probability percentage,
-  \item categorical rain prediction,
-  \item short rain status string,
-  \item current LCD forecast mode,
-  \item Wi-Fi connection state.
+  \item \textbf{Configured via the Web Interface:} When the device connects to a Wi-Fi network (STA mode), the user can navigate to the web dashboard and access the cloud settings form. This form allows users to specify:
+    \begin{itemize}
+      \item \textbf{MQTT Broker Host:} The IP address or fully qualified domain name (FQDN) of the target MQTT server. Examples:
+        \begin{itemize}
+          \item For CoreIOT Cloud: \texttt{app.coreiot.io} (default if not overridden).
+          \item For a local MQTT broker running on a desktop computer in the same network: \texttt{192.168.1.100}.
+        \end{itemize}
+      \item \textbf{MQTT Broker Port:} Typically \texttt{1883} for standard MQTT (or \texttt{8883} for MQTT over TLS).
+      \item \textbf{Username:} For CoreIOT cloud, this is the \textbf{access token} provided by the CoreIOT platform (e.g., \texttt{srQf3iXbZDdZjL8PuatC}). For a local broker, this can be any username configured in the broker's authentication system.
+      \item \textbf{Password:} For CoreIOT cloud, the password field can be left empty or set to a placeholder (CoreIOT uses token-based auth). For a local MQTT broker with user/password authentication, this is the password corresponding to the configured username.
+    \end{itemize}
+  \item \textbf{Persisted Across Restarts:} Once configured, these settings are stored in the \texttt{Preferences} storage under the \texttt{WIFI\_STORE\_NAMESPACE}. They survive power cycles and Wi-Fi reconnections.
+  \item \textbf{Reactive Reconnection:} If the user modifies the broker settings via the web interface, the CoreIOT task automatically detects the change. Upon the next configuration check (or upon reconnection), the task will disconnect from the old broker and connect to the newly specified broker.
 \end{itemize}
 
-This payload is a good design choice because it combines raw measurements with
-derived context. The cloud dashboard therefore has richer observability than a
-minimal two-field sensor upload.
+This design allows seamless deployment flexibility:
+\begin{itemize}
+  \item In a \textbf{cloud-connected scenario}, the device publishes telemetry to the official CoreIOT platform (\texttt{app.coreiot.io}) using the CoreIOT access token.
+  \item In a \textbf{private/local deployment scenario}, the device can be reconfigured via the web form to point to a local MQTT broker running on a private server, without any code changes or recompilation.
+\end{itemize}
 
-The CoreIOT task also supports remote control through RPC. It accepts several
-method aliases, parses flexible boolean-like parameters, and maps the result to
-LCD content mode. In practice, this means a cloud-side control widget can switch
-the local LCD between sensor display and TinyML forecast display during STA
-operation.
+\subsection*{Telemetry Publishing and Payload Structure}
+
+The CoreIOT task publishes rich, structured telemetry data every 10 seconds. The payload includes:
+\begin{itemize}
+  \item \textbf{Temperature (°C):} Real-time sensor reading from the DHT20.
+  \item \textbf{Humidity (\%):} Real-time sensor reading from the DHT20.
+  \item \textbf{Timestamp:} Unix epoch time (if NTP sync is available) or a tick-based fallback for relative timing. This enables accurate time-series data in the cloud dashboard.
+  \item \textbf{Rain Probability (0-1):} Continuous probability output from the quantized TinyML model, ranging from 0.0 (no rain) to 1.0 (certain rain).
+  \item \textbf{Rain Probability Percentage (0-100):} User-friendly percentage representation of the probability.
+  \item \textbf{Categorical Rain Prediction:} Boolean classification ("RAIN" or "SUNNY") determined by the 0.5 threshold applied to the probability.
+  \item \textbf{Short Rain Status String:} Human-readable forecast label such as \texttt{"Rain Expected"} or \texttt{"Safe Weather"}.
+  \item \textbf{Current LCD Content Mode:} Indicates whether the local display is showing real-time sensor data or TinyML forecast. This can be controlled remotely.
+  \item \textbf{Wi-Fi Connection State:} Signal strength (RSSI) and connection status, allowing the cloud dashboard to monitor device connectivity health.
+\end{itemize}
+
+This payload structure is carefully chosen because it balances data richness with network efficiency. Rather than sending only raw temperature and humidity, the system also transmits:
+\begin{itemize}
+  \item Derived analytics (TinyML prediction and probability),
+  \item Contextual metadata (timestamp, display mode, signal strength), and
+  \item Redundant representations (both 0-1 probability and 0-100 percentage).
+\end{itemize}
+
+This redundancy ensures that cloud dashboards and local logging systems have full context without requiring post-processing.
+
+\subsection*{Remote Control and RPC Interaction}
+
+The CoreIOT task is not purely a data publisher; it also acts as an \textbf{RPC responder}. The task subscribes to RPC request topics and can accept commands such as:
+\begin{itemize}
+  \item \textbf{Display Mode Toggle:} A cloud-side widget can send a command to switch the local LCD between real-time sensor display and TinyML forecast display.
+  \item \textbf{Parameter Query:} Commands to request the current state, configuration, or other device metadata.
+  \item \textbf{Control Signals:} Future extensions could include commands to adjust sampling intervals, change broadcast thresholds, or trigger firmware updates.
+\end{itemize}
+
+The RPC parser is designed to be flexible, accepting various boolean-like parameter formats (e.g., \texttt{"true"}, \texttt{"1"}, \texttt{"on"}) and mapping them to the appropriate local action. This approach enables a responsive, bidirectional cloud-to-device communication pattern without imposing a rigid command schema.
+
+\subsection*{Failure Handling and Reconnection Logic}
+
+The CoreIOT task implements robust failure recovery:
+\begin{itemize}
+  \item \textbf{Connection Loss Detection:} If the MQTT broker becomes unreachable, the task detects the disconnection and enters a reconnection loop.
+  \item \textbf{Exponential Backoff:} Rather than attempting immediate reconnection (which could overwhelm the network), the task implements an exponential backoff strategy, with configurable retry intervals.
+  \item \textbf{Graceful Degradation:} If cloud connection is unavailable, the local system continues to operate normally. Telemetry is not published, but sensor readings, LCD display, and local features remain fully functional.
+  \item \textbf{Automatic Recovery:} Once the broker becomes reachable again, the task re-establishes connection and resumes publishing without manual intervention.
+\end{itemize}
+
+This design ensures that network transients do not compromise the integrity of the entire embedded system.
+
+
+\subsection{MQTT Broker Implementation: TinyMQTT Service}
+
+The MQTT broker is a standalone Python service designed to serve as an intermediary between the ESP32 IoT devices and the CoreIOT cloud platform. Unlike the firmware-side CoreIOT task (which acts as a client), the broker is a stateful service that accumulates telemetry from multiple devices, aggregates their data, and periodically forwards the aggregated stream to CoreIOT. The implementation demonstrates a complete IoT gateway pattern suitable for local deployment and demonstrates flexible authentication.
+
+\subsection*{Architecture and Role}
+
+The TinyMQTT broker serves three primary roles:
+\begin{enumerate}
+  \item \textbf{Local MQTT Broker:} It accepts incoming connections from multiple ESP32 devices using the standard MQTT protocol. Each device is authenticated using configured username and password credentials.
+  \item \textbf{Data Aggregator:} It receives telemetry messages from each device, parses the JSON payloads, and stores them in an in-memory database indexed by device ID. This allows the broker to maintain a running history of samples.
+  \item \textbf{Cloud Gateway:} It acts as an MQTT client to the CoreIOT platform, batching up accumulated telemetry and forwarding it at regular intervals (default: every 5 seconds) to \texttt{v1/gateway/telemetry} topic using a single authenticated connection.
+\end{enumerate}
+
+This three-layer pattern decouples the device communication (local MQTT) from the cloud platform communication (separate MQTT client), reducing latency on the device side and enabling flexible cloud platform switching without device code changes.
+
+\subsection*{Configuration and Credentials}
+
+The broker is configured through static settings at the top of \texttt{TinyMQTT.py}:
+\begin{itemize}
+  \item \textbf{BROKER\_IP:} The IP address where the broker listens for incoming device connections. Default: \texttt{192.168.137.1} (adjustable based on the host machine's network interface).
+  \item \textbf{BROKER\_PORT:} The MQTT port, typically \texttt{1883} for standard MQTT.
+  \item \textbf{BROKER\_USER and BROKER\_PASS:} Static credentials that all devices must use when connecting to the broker. These are hashed using SHA256 and stored in \texttt{password\_file.txt}.
+  \item \textbf{GATEWAY\_HOST, GATEWAY\_PORT, GATEWAY\_ACCESS\_TOKEN:} Configuration for the CoreIOT cloud platform. The broker connects to \texttt{app.coreiot.io:1883} and authenticates with the provided access token. This token must be obtained from the CoreIOT admin dashboard.
+  \item \textbf{GATEWAY\_PUBLISH\_INTERVAL\_SEC:} The interval (default 5 seconds) at which the broker batches and sends telemetry to CoreIOT.
+\end{itemize}
+
+All configuration is done at startup; no dynamic reconfiguration is currently supported, allowing the broker to be a simple, stateless service that can be containerized or deployed to a dedicated machine.
+
+\subsection*{Device Auto-Detection and Dynamic Device Management}
+
+Unlike pre-configured systems that require manual device registration, the TinyMQTT broker implements \textbf{automatic device discovery}:
+\begin{itemize}
+  \item \textbf{Topic-Based Device Identification:} Each incoming MQTT message is analyzed by its topic path. The broker expects messages published to topics of the form \texttt{devices/<device\_id>/telemetry}. The second segment of the topic is extracted as the \textbf{device ID}.
+  \item \textbf{JSON Payload Parsing:} Each message is expected to be a JSON object containing sensor data. If the JSON includes a \texttt{device\_id} field, that value is used; otherwise, the device ID from the topic is retained.
+  \item \textbf{Dynamic Device Creation:} The first time a message arrives from a new device ID, the broker automatically creates an entry for that device in the in-memory database. No manual registration, configuration file, or administrative action is required. Subsequent messages from the same device ID are appended to its growing sample list.
+\end{itemize}
+
+This approach offers several advantages:
+\begin{itemize}
+  \item \textbf{Zero Setup:} New devices can join the system by simply connecting to the broker and publishing to the standard topic pattern. They appear in the system immediately.
+  \item \textbf{Scalability:} The broker can handle dozens or hundreds of devices without pre-configuration.
+  \item \textbf{Flexibility:} Devices can dynamically change their device ID (though this is not recommended in practice) by publishing to a different topic path.
+\end{itemize}
+
+\subsection*{In-Memory Data Storage and Buffering}
+
+The broker uses two key data structures to manage incoming telemetry:
+\begin{itemize}
+  \item \textbf{DEVICE\_SAMPLES:} A dictionary mapping device ID to a list of samples. Each sample is a dictionary containing \texttt{temperature}, \texttt{humidity}, \texttt{rain\_prob}, and \texttt{ts} (timestamp) fields. This structure persists indefinitely, maintaining a complete historical record of all samples received during the broker's uptime. It serves as a local data archive.
+  \item \textbf{DEVICE\_PENDING:} A secondary dictionary also mapping device ID to samples. However, this list is cleared every time the gateway publisher sends telemetry to CoreIOT. Thus, DEVICE\_PENDING represents the "pending batch" of samples waiting to be forwarded to the cloud. This two-buffer pattern ensures that:
+    \begin{itemize}
+      \item Local archival is not lost when syncing to the cloud.
+      \item The cloud publisher sends only new samples, avoiding redundant uploads.
+    \end{itemize}
+\end{itemize}
+
+Both dictionaries are protected by \texttt{DEVICE\_LOCK}, a threading.Lock() object, ensuring thread-safe access when the subscriber thread is receiving messages and the gateway publisher thread is reading and clearing the pending buffer simultaneously.
+
+\subsection*{Message Reception and Storage Workflow}
+
+The on-device message reception is handled by the \texttt{run\_subscriber()} function, which runs in a dedicated thread:
+\begin{enumerate}
+  \item \textbf{Connection Establishment:} The subscriber creates an MQTT client, authenticates with \texttt{BROKER\_USER} and \texttt{BROKER\_PASS}, and connects to the local broker (127.0.0.1) at the configured port.
+  \item \textbf{Topic Subscription:} The subscriber subscribes to the wildcard topic \texttt{\#}, which matches all incoming messages published to the broker.
+  \item \textbf{Message Reception:} Upon receiving each message, the \texttt{on\_message()} callback is triggered. The payload is decoded as UTF-8 and parsed as JSON.
+  \item \textbf{Device ID Extraction:} The topic path is split. If it matches the pattern \texttt{devices/<device\_id>/telemetry}, the device ID is extracted from the second segment. Otherwise, it attempts to read the device ID from the JSON \texttt{device\_id} field.
+  \item \textbf{Sample Construction:} A dictionary containing the relevant fields (\texttt{temperature}, \texttt{humidity}, \texttt{rain\_prob}, \texttt{ts}) is built from the JSON payload.
+  \item \textbf{Thread-Safe Storage:} Under mutex protection, the sample is appended to both \texttt{DEVICE\_SAMPLES[device\_id]} and \texttt{DEVICE\_PENDING[device\_id]}. If either list does not yet exist, it is created.
+  \item \textbf{Logging:} A console message is printed indicating the device ID, total sample count, and the stored sample content. This provides real-time visibility into the broker's data ingestion.
+\end{enumerate}
+
+This workflow ensures that:
+\begin{itemize}
+  \item Every sample from every device is captured, parsed, and stored.
+  \item Invalid JSON is gracefully rejected (with a warning message).
+  \item Non-JSON payloads are also logged and skipped.
+  \item Device IDs are dynamically detected and managed without pre-registration.
+\end{itemize}
+
+\subsection*{Batched Cloud Publishing to CoreIOT}
+
+In parallel to the subscriber thread, the \texttt{start\_gateway\_publisher()} function runs in a separate thread and implements the cloud synchronization logic:
+\begin{enumerate}
+  \item \textbf{Cloud Connection:} The publisher creates a second MQTT client, authenticates using the \texttt{GATEWAY\_ACCESS\_TOKEN} as the username (CoreIOT uses token-based auth), and connects to \texttt{app.coreiot.io} at port 1883.
+  \item \textbf{Periodic Batching:} Every \texttt{GATEWAY\_PUBLISH\_INTERVAL\_SEC} seconds (default 5 seconds), the publisher wakes up and checks if there are any pending samples.
+  \item \textbf{Snapshot and Clear:} Under mutex protection, the publisher captures a snapshot of the current \texttt{DEVICE\_PENDING} dictionary and immediately clears it. This ensures that:
+    \begin{itemize}
+      \item Even if new samples arrive during the upload, they are not lost.
+      \item The next batch will only contain samples received after the previous batch.
+    \end{itemize}
+  \item \textbf{Payload Construction:} For each device in the snapshot, the publisher iterates through its pending samples. For each sample:
+    \begin{itemize}
+      \item If the sample includes a \texttt{ts} field, it is converted to milliseconds (CoreIOT expects millisecond precision).
+      \item If \texttt{ts} is missing, the current system time is used.
+      \item A dictionary containing \texttt{ts} and \texttt{values} (temperature, humidity, rain\_prob) is appended to a per-device list.
+    \end{itemize}
+  \item \textbf{JSON Serialization and Upload:} The entire payload structure is serialized to JSON and published to the \texttt{v1/gateway/telemetry} topic on CoreIOT. The CoreIOT platform then deserializes this telemetry and associates each sample with the corresponding device ID.
+  \item \textbf{Logging:} Upon successful publish, a message is logged indicating successful gateway delivery.
+\end{enumerate}
+
+The resulting payload structure sent to CoreIOT has the following form:
+\begin{verbatim}
+{
+  "device_1": [
+    {"ts": 1700000000000, "values": {"temperature": 25.3, "humidity": 60, "rain_prob": 0.15}},
+    {"ts": 1700000005000, "values": {"temperature": 25.5, "humidity": 61, "rain_prob": 0.18}}
+  ],
+  "device_2": [
+    {"ts": 1700000001000, "values": {"temperature": 28.1, "humidity": 55, "rain_prob": 0.05}}
+  ]
+}
+\end{verbatim}
+
+This structure enables CoreIOT to:
+\begin{itemize}
+  \item Track multiple devices in a single batch.
+  \item Associate each sample with precise timestamps.
+  \item Build time-series charts and analytics per device.
+  \item Apply historical analysis and anomaly detection at the cloud level.
+\end{itemize}
+
+\subsection*{Multi-Threading and Synchronization}
+
+The TinyMQTT broker is a multi-threaded application with three main threads:
+\begin{enumerate}
+  \item \textbf{Broker Thread:} Runs the hbmqtt broker engine, which accepts device connections and routes messages internally.
+  \item \textbf{Subscriber Thread:} Runs the MQTT subscriber client, which listens to all messages on the broker and populates the in-memory data structures.
+  \item \textbf{Gateway Publisher Thread:} Periodically batches and uploads telemetry to the CoreIOT cloud.
+\end{enumerate}
+
+All threads are daemon threads, meaning if the main process exits, they are terminated immediately without a graceful shutdown sequence. Thread safety is ensured through \texttt{DEVICE\_LOCK} protecting all access to \texttt{DEVICE\_SAMPLES} and \texttt{DEVICE\_PENDING}.
+
+A careful reading of the code shows that the subscriber and publisher never simultaneously read and write to the same structures:
+\begin{itemize}
+  \item The \textbf{subscriber} continuously appends to both \texttt{DEVICE\_SAMPLES} and \texttt{DEVICE\_PENDING}.
+  \item The \textbf{publisher} reads \texttt{DEVICE\_PENDING}, then clears it. It never modifies \texttt{DEVICE\_SAMPLES}.
+\end{itemize}
+
+This asymmetry means contention is minimized and deadlock risk is low. The lock is typically held for only a few microseconds per access.
+
+\subsection*{Failure Modes and Robustness}
+
+The broker implementation exhibits several desirable failure behaviors:
+\begin{itemize}
+  \item \textbf{Device Connection Loss:} If an ESP32 device disconnects, the broker continues operating. Reconnecting devices are treated as new clients and begin publishing immediately. No special recovery logic is needed.
+  \item \textbf{Cloud Connectivity Loss:} If CoreIOT becomes unreachable, the subscriber continues to accept and buffer device messages. Samples accumulate in \texttt{DEVICE\_PENDING} until cloud connectivity is restored. Once the cloud connection recovers, buffered samples are sent in the next batch cycle.
+  \item \textbf{JSON Parse Errors:} If a device publishes malformed JSON, the subscriber logs the error and skips the message. The broker remains operational.
+  \item \textbf{Broker Restart:} If the broker service is restarted, in-memory buffers are lost (DEVICE\_SAMPLES and DEVICE\_PENDING are cleared). However, once devices reconnect and resume publishing, the system returns to normal operation. For permanent archival, an external database could be integrated.
+\end{itemize}
+
+This robustness makes the broker suitable for long-running deployments in environments with occasional network transients.
+
+\subsection*{Extensibility and Future Enhancements}
+
+The current TinyMQTT implementation is intentionally kept simple and modular. It is well-suited for future enhancements:
+\begin{itemize}
+  \item \textbf{Database Persistence:} Adding a SQL database (SQLite, PostgreSQL) to persist DEVICE\_SAMPLES beyond broker uptime.
+  \item \textbf{Multiple Cloud Backends:} Supporting secondary cloud platforms (e.g., ThingsBoard, Azure IoT Hub) by instantiating additional gateway publisher clients.
+  \item \textbf{Dynamic Configuration:} Implementing a REST API or web interface to reconfigure broker settings without restarting.
+  \item \textbf{Rate Limiting and Quotas:} Adding per-device or per-message rate limits to prevent misbehaving devices from overwhelming the system.
+  \item \textbf{Data Transformation Pipelines:} Inserting intermediate processing (e.g., anomaly detection, data aggregation) between ingestion and cloud publish.
+  \item \textbf{MQTT Advanced Features:} Implementing QoS 2 (exactly-once delivery), retained messages, or last-will-and-testament (LWT) for enhanced reliability.
+\end{itemize}
 
 \subsection{Time Utility Module}
 The file \texttt{app\_time\_utils.cpp} provides helper routines for:
